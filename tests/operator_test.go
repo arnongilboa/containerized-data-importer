@@ -227,6 +227,7 @@ var _ = Describe("ALL Operator tests", func() {
 			})
 
 			// Condition flags can be found here with their meaning https://github.com/kubevirt/hyperconverged-cluster-operator/blob/main/docs/conditions.md
+			//F+
 			It("[test_id:3953]Condition flags on CR should be healthy and operating", func() {
 				cdiObject := getCDI(f)
 				conditionMap := sdk.GetConditionValues(cdiObject.Status.Conditions)
@@ -236,6 +237,7 @@ var _ = Describe("ALL Operator tests", func() {
 				Expect(conditionMap[conditions.ConditionDegraded]).To(Equal(corev1.ConditionFalse))
 			})
 
+			//F+
 			It("should make CDI config authority", func() {
 				Eventually(func() bool {
 					cdiObject := getCDI(f)
@@ -257,10 +259,11 @@ var _ = Describe("ALL Operator tests", func() {
 				Expect(nodes.Items).ToNot(BeEmpty(), "There should be some compute node")
 				Expect(err).ToNot(HaveOccurred())
 
-				cdiPods, err = f.K8sClient.CoreV1().Pods(f.CdiInstallNs).List(context.TODO(), metav1.ListOptions{})
+				cdiPods = getCDIPods(f)
+//				f.K8sClient.CoreV1().Pods(f.CdiInstallNs).List(context.TODO(), metav1.ListOptions{})
 
-				Expect(err).ToNot(HaveOccurred(), "failed listing cdi pods")
-				Expect(len(cdiPods.Items)).To(BeNumerically(">", 0), "no cdi pods found")
+//				Expect(err).ToNot(HaveOccurred(), "failed listing cdi pods")
+//				Expect(len(cdiPods.Items)).To(BeNumerically(">", 0), "no cdi pods found")
 			})
 
 			AfterEach(func() {
@@ -281,8 +284,8 @@ var _ = Describe("ALL Operator tests", func() {
 
 				By("Waiting for there to be as many CDI pods as before")
 				Eventually(func() bool {
-					newCdiPods, err = f.K8sClient.CoreV1().Pods(f.CdiInstallNs).List(context.TODO(), metav1.ListOptions{})
-					Expect(err).ToNot(HaveOccurred(), "failed getting CDI pods")
+					newCdiPods = getCDIPods(f)//f.K8sClient.CoreV1().Pods(f.CdiInstallNs).List(context.TODO(), metav1.ListOptions{})
+//					Expect(err).ToNot(HaveOccurred(), "failed getting CDI pods")
 
 					By(fmt.Sprintf("number of cdi pods: %d\n new number of cdi pods: %d\n", len(cdiPods.Items), len(newCdiPods.Items)))
 					return len(cdiPods.Items) == len(newCdiPods.Items)
@@ -313,7 +316,8 @@ var _ = Describe("ALL Operator tests", func() {
 				}, 5*time.Minute, 2*time.Second).Should(BeTrue())
 			})
 
-			It("should deploy components that tolerate CriticalAddonsOnly taint", func() {
+			//F+ fix label selector before/after
+			FIt("should deploy components that tolerate CriticalAddonsOnly taint", func() {
 				cr := getCDI(f)
 				criticalAddonsToleration := corev1.Toleration{
 					Key:      "CriticalAddonsOnly",
@@ -401,7 +405,7 @@ var _ = Describe("ALL Operator tests", func() {
 				removeCDI()
 				ensureCDI()
 			})
-
+//FFFFFFF
 			It("[test_id:4986]should remove/install CDI a number of times successfully", func() {
 				for i := 0; i < 10; i++ {
 					err := f.CdiClient.CdiV1beta1().CDIs().Delete(context.TODO(), cr.Name, metav1.DeleteOptions{})
@@ -1393,7 +1397,12 @@ var _ = Describe("ALL Operator tests", func() {
 })
 
 func getCDIPods(f *framework.Framework) *corev1.PodList {
-	cdiPods, err := f.K8sClient.CoreV1().Pods(f.CdiInstallNs).List(context.TODO(), metav1.ListOptions{})
+	labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/component": "storage"}}
+	cdiPods, err := f.K8sClient.CoreV1().Pods(f.CdiInstallNs).List(context.TODO(), metav1.ListOptions{
+		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
+	})
+
+
 	Expect(err).ToNot(HaveOccurred(), "failed listing cdi pods")
 	Expect(len(cdiPods.Items)).To(BeNumerically(">", 0), "no cdi pods found")
 	return cdiPods
@@ -1485,8 +1494,9 @@ func waitCDI(f *framework.Framework, cr *cdiv1.CDI, cdiPods *corev1.PodList) {
 
 	By("Waiting for there to be as many CDI pods as before")
 	Eventually(func() bool {
-		newCdiPods, err = f.K8sClient.CoreV1().Pods(f.CdiInstallNs).List(context.TODO(), metav1.ListOptions{})
-		Expect(err).ToNot(HaveOccurred(), "failed getting CDI pods")
+		newCdiPods = getCDIPods(f)
+		//f.K8sClient.CoreV1().Pods(f.CdiInstallNs).List(context.TODO(), metav1.ListOptions{})
+		//Expect(err).ToNot(HaveOccurred(), "failed getting CDI pods")
 
 		By(fmt.Sprintf("number of cdi pods: %d\n new number of cdi pods: %d\n", len(cdiPods.Items), len(newCdiPods.Items)))
 		return len(cdiPods.Items) == len(newCdiPods.Items)
