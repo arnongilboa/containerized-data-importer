@@ -551,7 +551,7 @@ func (r *CloneReconcilerBase) updateStatusPhase(pvc *corev1.PersistentVolumeClai
 		return nil
 	}
 
-	if err := r.populateSourceIfSourceRef(dataVolumeCopy); err != nil {
+	if err := r.populateSourceIfSourceRef(dataVolumeCopy, pvc); err != nil {
 		return err
 	}
 	sourceName, sourceNamespace := cc.GetCloneSourceNameAndNamespace(dataVolumeCopy)
@@ -583,19 +583,49 @@ func (r *CloneReconcilerBase) updateStatusPhase(pvc *corev1.PersistentVolumeClai
 
 // If SourceRef is set, populate spec.Source with data from the DataSource
 // Note that when the controller actually updates the DV (updateDataVolume), we nil out spec.Source when SourceRef is set
-func (r *CloneReconcilerBase) populateSourceIfSourceRef(dv *cdiv1.DataVolume) error {
+func (r *CloneReconcilerBase) populateSourceIfSourceRef(dv *cdiv1.DataVolume, pvc *corev1.PersistentVolumeClaim) error {
 	if dv.Spec.SourceRef == nil {
 		return nil
 	}
-	if dv.Spec.SourceRef.Kind != cdiv1.DataVolumeDataSource {
-		return errors.Errorf("Unsupported sourceRef kind %s, currently only %s is supported", dv.Spec.SourceRef.Kind, cdiv1.DataVolumeDataSource)
+	//FIXME
+	if dv.Spec.SourceRef.Kind != cdiv1.DataVolumeDataSource && dv.Spec.SourceRef.Kind != cdiv1.DataVolumeMetaDataSource {
+		return errors.Errorf("Unsupported sourceRef kind %s", dv.Spec.SourceRef.Kind)
+	}
+	name := dv.Spec.SourceRef.Name
+
+	if pvc != nil {
+		r.log.Info("XXXXX1 PVC", "name", pvc.Name, "phase", dv.Status.Phase, "node", pvc.Annotations[cc.AnnSelectedNode])
+	} else {
+		r.log.Info("XXXXX1 No PVC yet", "phase", dv.Status.Phase)
+	}
+
+	if dv.Spec.SourceRef.Kind == cdiv1.DataVolumeMetaDataSource {
+		if pvc == nil {
+			r.log.Info("XXXXX2 No PVC yet")
+			return nil
+			//return errors.Errorf("NO PVC yet")
+		}
+		nodeName := pvc.Annotations[cc.AnnSelectedNode]
+		if nodeName != "" {
+			node := &corev1.Node{}
+			if err := r.client.Get(context.TODO(), types.NamespacedName{Name: nodeName}, node); err != nil {
+				return err
+			}
+			name = dv.Spec.SourceRef.Name + "-" + node.Status.NodeInfo.Architecture
+			r.log.Info("XXXXX2 NAME", "name", name)
+		} else {
+			r.log.Info("XXXXX2 PVC has no selected node yet")
+			//return nil
+			return errors.Errorf("PVC has no selected node yet")
+		}
 	}
 	ns := dv.Namespace
 	if dv.Spec.SourceRef.Namespace != nil && *dv.Spec.SourceRef.Namespace != "" {
 		ns = *dv.Spec.SourceRef.Namespace
 	}
 	dataSource := &cdiv1.DataSource{}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: dv.Spec.SourceRef.Name, Namespace: ns}, dataSource); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: name, Namespace: ns}, dataSource); err != nil {
+		r.log.Info("XXXXX", "err", err)
 		return err
 	}
 	dv.Spec.Source = &cdiv1.DataVolumeSource{

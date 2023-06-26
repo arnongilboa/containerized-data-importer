@@ -231,7 +231,7 @@ func (r *PvcCloneReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 
 func (r *PvcCloneReconciler) prepare(syncState *dvSyncState) error {
 	dv := syncState.dvMutated
-	if err := r.populateSourceIfSourceRef(dv); err != nil {
+	if err := r.populateSourceIfSourceRef(dv, syncState.pvc); err != nil {
 		return err
 	}
 	return nil
@@ -716,7 +716,7 @@ func (r *PvcCloneReconciler) cleanup(syncState *dvSyncState) error {
 
 	r.log.V(3).Info("Cleanup initiated in dv PVC clone controller")
 
-	if err := r.populateSourceIfSourceRef(dv); err != nil {
+	if err := r.populateSourceIfSourceRef(dv, syncState.pvc); err != nil {
 		return err
 	}
 
@@ -881,6 +881,11 @@ func (r *PvcCloneReconciler) getCloneStrategy(dataVolume *cdiv1.DataVolume) (*cd
 }
 
 func (r *PvcCloneReconciler) findSourcePvc(dataVolume *cdiv1.DataVolume) (*corev1.PersistentVolumeClaim, error) {
+	//FIXME
+	if dataVolume.Spec.Source == nil {
+		return nil, nil
+	}
+
 	sourcePvcSpec := dataVolume.Spec.Source.PVC
 	if sourcePvcSpec == nil {
 		return nil, errors.New("no source PVC provided")
@@ -975,7 +980,9 @@ func (r *PvcCloneReconciler) getPreferredCloneStrategyForStorageClass(storageCla
 func (r *PvcCloneReconciler) validateCloneAndSourcePVC(syncState *dvSyncState, log logr.Logger) (bool, error) {
 	datavolume := syncState.dvMutated
 	sourcePvc, err := r.findSourcePvc(datavolume)
-	if err != nil {
+
+	//FIXME
+	if err != nil || sourcePvc == nil {
 		// Clone without source
 		if k8serrors.IsNotFound(err) {
 			syncErr := r.syncDataVolumeStatusPhaseWithEvent(syncState, datavolume.Status.Phase, nil,

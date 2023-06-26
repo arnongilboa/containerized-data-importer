@@ -367,11 +367,17 @@ func getDataVolumeOp(log logr.Logger, dv *cdiv1.DataVolume, client client.Client
 }
 
 func getSourceRefOp(log logr.Logger, dv *cdiv1.DataVolume, client client.Client) dataVolumeOp {
+	//FIXME
+	if dv.Spec.SourceRef.Kind == cdiv1.DataVolumeMetaDataSource {
+		return dataVolumePvcClone
+	}
+
 	dataSource := &cdiv1.DataSource{}
 	ns := dv.Namespace
 	if dv.Spec.SourceRef.Namespace != nil && *dv.Spec.SourceRef.Namespace != "" {
 		ns = *dv.Spec.SourceRef.Namespace
 	}
+
 	nn := types.NamespacedName{Namespace: ns, Name: dv.Spec.SourceRef.Name}
 	if err := client.Get(context.TODO(), nn, dataSource); err != nil {
 		log.Error(err, "Unable to get DataSource", "namespacedName", nn)
@@ -469,6 +475,22 @@ func (r *ReconcilerBase) syncDvPvcState(log logr.Logger, req reconcile.Request, 
 	}
 
 	if syncState.pvc != nil {
+		/**
+		pvc := syncState.pvc
+
+		nodeName := pvc.Annotations[cc.AnnSelectedNode]
+		if nodeName != "" {
+			log.Info("XXXXX pvc", "name", pvc.Name, "phase", pvc.Status.Phase, "node", nodeName)
+			node := &corev1.Node{}
+			if err := r.client.Get(context.TODO(), types.NamespacedName{Name: nodeName}, node); err != nil {
+				log.Info("XXXXX", "err", err.Error())
+			} else {
+				log.Info("XXXXX", "arch", node.Status.NodeInfo.Architecture)
+			}
+		} else {
+			log.Info("XXXXX pvc", "name", pvc.Name, "phase", pvc.Status.Phase)
+		}
+		*/
 		if err := r.garbageCollect(&syncState, log); err != nil {
 			return syncState, err
 		}

@@ -128,7 +128,7 @@ func (r *SnapshotCloneReconciler) Reconcile(ctx context.Context, req reconcile.R
 
 func (r *SnapshotCloneReconciler) prepare(syncState *dvSyncState) error {
 	dv := syncState.dvMutated
-	if err := r.populateSourceIfSourceRef(dv); err != nil {
+	if err := r.populateSourceIfSourceRef(dv, syncState.pvc); err != nil {
 		return err
 	}
 
@@ -508,7 +508,7 @@ func (r *SnapshotCloneReconciler) cleanup(syncState *dvSyncState) error {
 
 	r.log.V(3).Info("Cleanup initiated in dv snapshot clone controller")
 
-	if err := r.populateSourceIfSourceRef(dv); err != nil {
+	if err := r.populateSourceIfSourceRef(dv, syncState.pvc); err != nil {
 		return err
 	}
 

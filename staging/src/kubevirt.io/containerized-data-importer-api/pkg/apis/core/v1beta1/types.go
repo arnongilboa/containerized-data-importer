@@ -276,6 +276,9 @@ type DataVolumeSourceRef struct {
 const (
 	// DataVolumeDataSource is DataSource source reference for DataVolume
 	DataVolumeDataSource = "DataSource"
+
+	// DataVolumeMetaDataSource is meta DataSource reference for DataVolume
+	DataVolumeMetaDataSource = "MetaDataSource"
 )
 
 // DataVolumeStatus contains the current status of the DataVolume

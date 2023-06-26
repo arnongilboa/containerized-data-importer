@@ -245,6 +245,18 @@ func getControllerClusterPolicyRules() []rbacv1.PolicyRule {
 				"update",
 			},
 		},
+		{
+			APIGroups: []string{
+				"",
+			},
+			Resources: []string{
+				"nodes",
+			},
+			Verbs: []string{
+				"get",
+				"list",
+			},
+		},
 	}
 }
 

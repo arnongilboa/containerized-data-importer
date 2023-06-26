@@ -129,6 +129,47 @@ var _ = Describe("DataSource", func() {
 		Expect(err).ToNot(HaveOccurred())
 	}
 
+	FIt("XXXXXXXX", func() {
+		const (
+			dsAmdName  = "ds-amd64"
+			dsArmName  = "ds-arm64"
+			pvcAmdName = "pvc-amd64"
+			pvcArmName = "pvc-arm64"
+		)
+
+		createDv(pvcAmdName, testURL())
+		createDv(pvcArmName, testURL())
+
+		ds1 := createDs(dsAmdName, pvcAmdName)
+		ds2 := createDs(dsArmName, pvcArmName)
+
+		ds1 = waitForReadyCondition(ds1, corev1.ConditionTrue, "Ready")
+		ds2 = waitForReadyCondition(ds2, corev1.ConditionTrue, "Ready")
+
+		/**
+		dv := utils.NewDataVolumeWithSourceRef("clone-dv", "1Gi", ds1.Namespace, ds1.Name)
+		dv.Annotations[cc.AnnImmediateBinding] = "true"
+		Expect(dv).ToNot(BeNil())
+		dv, err := utils.CreateDataVolumeFromDefinition(f.CdiClient, f.Namespace.Name, dv)
+		Expect(err).ToNot(HaveOccurred())
+		By("Wait for the clone DV success")
+		err = utils.WaitForDataVolumePhase(f, dv.Namespace, cdiv1.Succeeded, dv.Name)
+		Expect(err).ToNot(HaveOccurred())
+		*/
+
+		By("Create clone DV with SourceRef pointing a MetaDataSource")
+		dv := utils.NewDataVolumeWithSourceRef("clone-dv", "1Gi", f.Namespace.Namespace, "ds")
+		dv.Spec.SourceRef.Kind = cdiv1.DataVolumeMetaDataSource
+		dv.Annotations[cc.AnnImmediateBinding] = "true"
+		Expect(dv).ToNot(BeNil())
+		dv, err := utils.CreateDataVolumeFromDefinition(f.CdiClient, f.Namespace.Name, dv)
+		Expect(err).ToNot(HaveOccurred())
+
+		By("Wait for the clone DV success")
+		err = utils.WaitForDataVolumePhase(f, dv.Namespace, cdiv1.Succeeded, dv.Name)
+		Expect(err).ToNot(HaveOccurred())
+	})
+
 	It("[test_id:8067]status conditions should be updated when several DataSources refer the same pvc", func() {
 		createDv(pvc1Name, testURL())
 		ds1 := createDs(ds1Name, pvc1Name)

@@ -248,6 +248,12 @@ func (wh *dataVolumeValidatingWebhook) validateSourceRef(request *admissionv1.Ad
 			Field:   field.Child("sourceRef", "Kind").String(),
 		}
 	}
+
+	//FIXME
+	if spec.SourceRef.Kind == cdiv1.DataVolumeMetaDataSource {
+		return nil
+	}
+
 	if spec.SourceRef.Kind != cdiv1.DataVolumeDataSource {
 		return &metav1.StatusCause{
 			Type:    metav1.CauseTypeFieldValueInvalid,
