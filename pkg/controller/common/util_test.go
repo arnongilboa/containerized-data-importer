@@ -56,7 +56,7 @@ var _ = Describe("validateContentTypes", func() {
 	)
 })
 
-var _ = Describe("GetDefaultStorageClass", func() {
+var _ = Describe("getDefaultStorageClass", func() {
 	It("Should return the default storage class name", func() {
 		client := CreateClient(
 			CreateStorageClass("test-storage-class-1", nil),
@@ -64,7 +64,7 @@ var _ = Describe("GetDefaultStorageClass", func() {
 				AnnDefaultStorageClass: "true",
 			}),
 		)
-		sc, _ := GetDefaultStorageClass(context.Background(), client)
+		sc, _ := getDefaultStorageClass(context.Background(), client)
 		Expect(sc.Name).To(Equal("test-storage-class-2"))
 	})
 
@@ -73,7 +73,7 @@ var _ = Describe("GetDefaultStorageClass", func() {
 			CreateStorageClass("test-storage-class-1", nil),
 			CreateStorageClass("test-storage-class-2", nil),
 		)
-		sc, _ := GetDefaultStorageClass(context.Background(), client)
+		sc, _ := getDefaultStorageClass(context.Background(), client)
 		Expect(sc).To(BeNil())
 	})
 })

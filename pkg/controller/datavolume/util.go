@@ -24,6 +24,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -34,9 +35,9 @@ import (
 	"k8s.io/client-go/tools/record"
 	storagehelpers "k8s.io/component-helpers/storage/volume"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cdiv1 "kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1"
+	"kubevirt.io/containerized-data-importer/pkg/common"
 	cc "kubevirt.io/containerized-data-importer/pkg/controller/common"
 )
 
@@ -44,14 +45,33 @@ const (
 	// AnnOwnedByDataVolume annotation has the owner DataVolume name
 	AnnOwnedByDataVolume = "cdi.kubevirt.io/ownedByDataVolume"
 
-	// MessageErrStorageClassNotFound provides a const to indicate the DV storage spec is missing accessMode and no storageClass to choose profile
-	MessageErrStorageClassNotFound = "DataVolume.storage spec is missing accessMode and no storageClass to choose profile"
+	// MessageErrStorageClassNotFound provides a const to indicate the PVC spec is missing accessMode and no storageClass to choose profile
+	MessageErrStorageClassNotFound = "PVC spec is missing accessMode and no storageClass to choose profile"
 )
 
 var (
-	// ErrStorageClassNotFound indicates the DV storage spec is missing accessMode and no storageClass to choose profile
+	// ErrStorageClassNotFound indicates the PVC spec is missing accessMode and no storageClass to choose profile
 	ErrStorageClassNotFound = errors.New(MessageErrStorageClassNotFound)
 )
+
+// RenderPvc renders the PVC according to StorageProfiles
+func RenderPvc(ctx context.Context, client client.Client, pvc *v1.PersistentVolumeClaim) error {
+	if pvc.Spec.VolumeMode != nil &&
+		*pvc.Spec.VolumeMode == cdiv1.PersistentVolumeAuto {
+		pvc.Spec.VolumeMode = nil
+	}
+
+	dvContentType := cdiv1.DataVolumeContentType(cc.GetPVCContentType(pvc))
+	if err := renderPvcSpecVolumeModeAndAccessModes(client, &pvc.Spec, dvContentType); err != nil {
+		return err
+	}
+
+	isClone := pvc.Annotations[cc.AnnCloneType] != ""
+	if err := renderPvcSpecVolumeSize(client, &pvc.Spec, isClone); err != nil {
+		return err
+	}
+	return nil
+}
 
 // renderPvcSpec creates a new PVC Spec based on either the dv.spec.pvc or dv.spec.storage section
 func renderPvcSpec(client client.Client, recorder record.EventRecorder, log logr.Logger, dv *cdiv1.DataVolume, pvc *v1.PersistentVolumeClaim) (*v1.PersistentVolumeClaimSpec, error) {
@@ -66,35 +86,39 @@ func renderPvcSpec(client client.Client, recorder record.EventRecorder, log logr
 
 func pvcFromStorage(client client.Client, recorder record.EventRecorder, log logr.Logger, dv *cdiv1.DataVolume, pvc *v1.PersistentVolumeClaim) (*v1.PersistentVolumeClaimSpec, error) {
 	var pvcSpec *v1.PersistentVolumeClaimSpec
+	shouldRender := dv.Labels[common.PvcUseStorageProfileLabel] == "false"
 
 	if pvc == nil {
 		pvcSpec = copyStorageAsPvc(log, dv.Spec.Storage)
-		if err := renderPvcSpecVolumeModeAndAccessModes(client, recorder, log, dv, pvcSpec); err != nil {
-			return nil, err
+		if shouldRender {
+			dvContentType := cdiv1.DataVolumeContentType(cc.GetContentType(dv.Annotations[cc.AnnContentType]))
+			if err := renderPvcSpecVolumeModeAndAccessModes(client, pvcSpec, dvContentType); err != nil {
+				return nil, err
+			}
 		}
 	} else {
 		pvcSpec = pvc.Spec.DeepCopy()
 	}
 
-	if err := renderPvcSpecVolumeSize(client, dv.Spec, pvcSpec); err != nil {
-		return nil, err
+	if shouldRender {
+		isClone := dv.Spec.Source.PVC != nil || dv.Spec.Source.Snapshot != nil
+		if err := renderPvcSpecVolumeSize(client, pvcSpec, isClone); err != nil {
+			return nil, err
+		}
 	}
 
 	return pvcSpec, nil
 }
 
-func renderPvcSpecVolumeModeAndAccessModes(client client.Client, recorder record.EventRecorder, log logr.Logger, dv *cdiv1.DataVolume, pvcSpec *v1.PersistentVolumeClaimSpec) error {
-	if dv.Spec.ContentType == cdiv1.DataVolumeArchive {
+func renderPvcSpecVolumeModeAndAccessModes(client client.Client, pvcSpec *v1.PersistentVolumeClaimSpec, dvContentType cdiv1.DataVolumeContentType) error {
+	if dvContentType == cdiv1.DataVolumeArchive {
 		if pvcSpec.VolumeMode != nil && *pvcSpec.VolumeMode == v1.PersistentVolumeBlock {
-			log.V(1).Info("DataVolume with ContentType Archive cannot have block volumeMode", "namespace", dv.Namespace, "name", dv.Name)
-			recorder.Eventf(dv, v1.EventTypeWarning, cc.ErrClaimNotValid, "DataVolume with ContentType Archive cannot have block volumeMode")
-			return errors.Errorf("DataVolume with ContentType Archive cannot have block volumeMode")
+			return errors.Errorf("PVC with ContentType Archive cannot have block volumeMode")
 		}
-		volumeMode := v1.PersistentVolumeFilesystem
-		pvcSpec.VolumeMode = &volumeMode
+		pvcSpec.VolumeMode = &cc.FilesystemMode
 	}
 
-	storageClass, err := cc.GetStorageClassByName(context.TODO(), client, dv.Spec.Storage.StorageClassName)
+	storageClass, err := cc.GetStorageClassByName(context.TODO(), client, pvcSpec.StorageClassName)
 	if err != nil {
 		return err
 	}
@@ -104,8 +128,6 @@ func renderPvcSpecVolumeModeAndAccessModes(client client.Client, recorder record
 		}
 		// Not even default storageClass on the cluster, cannot apply the defaults, verify spec is ok
 		if len(pvcSpec.AccessModes) == 0 {
-			log.V(1).Info("Cannot set accessMode for new pvc", "namespace", dv.Namespace, "name", dv.Name)
-			recorder.Eventf(dv, v1.EventTypeWarning, cc.ErrClaimNotValid, MessageErrStorageClassNotFound)
 			return ErrStorageClassNotFound
 		}
 		return nil
@@ -113,12 +135,9 @@ func renderPvcSpecVolumeModeAndAccessModes(client client.Client, recorder record
 
 	pvcSpec.StorageClassName = &storageClass.Name
 	// given storageClass we can apply defaults if needed
-	if (pvcSpec.VolumeMode == nil || *pvcSpec.VolumeMode == "") && (len(pvcSpec.AccessModes) == 0) {
+	if (pvcSpec.VolumeMode == nil || *pvcSpec.VolumeMode == "") && len(pvcSpec.AccessModes) == 0 {
 		accessModes, volumeMode, err := getDefaultVolumeAndAccessMode(client, storageClass)
 		if err != nil {
-			log.V(1).Info("Cannot set accessMode and volumeMode for new pvc", "namespace", dv.Namespace, "name", dv.Name, "Error", err)
-			recorder.Eventf(dv, v1.EventTypeWarning, cc.ErrClaimNotValid,
-				fmt.Sprintf("DataVolume.storage spec is missing accessMode and volumeMode, cannot get access mode from StorageProfile %s", getName(storageClass)))
 			return err
 		}
 		pvcSpec.AccessModes = append(pvcSpec.AccessModes, accessModes...)
@@ -126,9 +145,6 @@ func renderPvcSpecVolumeModeAndAccessModes(client client.Client, recorder record
 	} else if len(pvcSpec.AccessModes) == 0 {
 		accessModes, err := getDefaultAccessModes(client, storageClass, pvcSpec.VolumeMode)
 		if err != nil {
-			log.V(1).Info("Cannot set accessMode for new pvc", "namespace", dv.Namespace, "name", dv.Name, "Error", err)
-			recorder.Eventf(dv, v1.EventTypeWarning, cc.ErrClaimNotValid,
-				fmt.Sprintf("DataVolume.storage spec is missing accessMode and cannot get access mode from StorageProfile %s", getName(storageClass)))
 			return err
 		}
 		pvcSpec.AccessModes = append(pvcSpec.AccessModes, accessModes...)
@@ -143,23 +159,31 @@ func renderPvcSpecVolumeModeAndAccessModes(client client.Client, recorder record
 	return nil
 }
 
-func renderPvcSpecVolumeSize(client client.Client, dvSpec cdiv1.DataVolumeSpec, pvcSpec *v1.PersistentVolumeClaimSpec) error {
-	requestedVolumeSize, err := resolveVolumeSize(client, dvSpec, pvcSpec)
+func renderPvcSpecVolumeSize(client client.Client, pvcSpec *v1.PersistentVolumeClaimSpec, isClone bool) error {
+	requestedSize, found := pvcSpec.Resources.Requests[v1.ResourceStorage]
+
+	// Storage size can be empty when cloning
+	if !found {
+		if !isClone {
+			return errors.Errorf("PVC Spec is not valid - missing storage size")
+		}
+		if pvcSpec.Resources.Requests == nil {
+			pvcSpec.Resources.Requests = v1.ResourceList{}
+		}
+		pvcSpec.Resources.Requests[v1.ResourceStorage] = resource.Quantity{}
+		return nil
+	}
+
+	requestedSize, err := cc.InflateSizeWithOverhead(context.TODO(), client, requestedSize.Value(), pvcSpec)
 	if err != nil {
 		return err
 	}
 	if pvcSpec.Resources.Requests == nil {
 		pvcSpec.Resources.Requests = v1.ResourceList{}
 	}
-	pvcSpec.Resources.Requests[v1.ResourceStorage] = *requestedVolumeSize
-	return nil
-}
+	pvcSpec.Resources.Requests[v1.ResourceStorage] = requestedSize
 
-func getName(storageClass *storagev1.StorageClass) string {
-	if storageClass != nil {
-		return storageClass.Name
-	}
-	return ""
+	return nil
 }
 
 func copyStorageAsPvc(log logr.Logger, storage *cdiv1.StorageSpec) *v1.PersistentVolumeClaimSpec {
@@ -179,20 +203,20 @@ func copyStorageAsPvc(log logr.Logger, storage *cdiv1.StorageSpec) *v1.Persisten
 }
 
 // Renders the PVC spec VolumeMode and AccessModes from an available satisfying PV
-func renderPvcSpecFromAvailablePv(c client.Client, pvcSpec *v1.PersistentVolumeClaimSpec) error {
+func renderPvcSpecFromAvailablePv(client client.Client, pvcSpec *v1.PersistentVolumeClaimSpec) error {
 	if pvcSpec.StorageClassName == nil {
 		return nil
 	}
 
-	pvList := &v1.PersistentVolumeList{}
-	fields := client.MatchingFields{claimStorageClassNameField: *pvcSpec.StorageClassName}
-	if err := c.List(context.TODO(), pvList, fields); err != nil {
+	pvList := &corev1.PersistentVolumeList{}
+	if err := client.List(context.TODO(), pvList); err != nil {
 		return err
 	}
+
 	for _, pv := range pvList.Items {
-		if pv.Status.Phase == v1.VolumeAvailable {
+		if pv.Spec.StorageClassName == *pvcSpec.StorageClassName && pv.Status.Phase == v1.VolumeAvailable {
 			pvc := &v1.PersistentVolumeClaim{Spec: *pvcSpec}
-			if err := checkVolumeSatisfyClaim(&pv, pvc); err == nil {
+			if err := CheckVolumeSatisfyClaim(&pv, pvc); err == nil {
 				pvcSpec.VolumeMode = pv.Spec.VolumeMode
 				if len(pvcSpec.AccessModes) == 0 {
 					pvcSpec.AccessModes = pv.Spec.AccessModes
@@ -205,14 +229,13 @@ func renderPvcSpecFromAvailablePv(c client.Client, pvcSpec *v1.PersistentVolumeC
 	return nil
 }
 
-func getDefaultVolumeAndAccessMode(c client.Client, storageClass *storagev1.StorageClass) ([]v1.PersistentVolumeAccessMode, *v1.PersistentVolumeMode, error) {
+func getDefaultVolumeAndAccessMode(client client.Client, storageClass *storagev1.StorageClass) ([]v1.PersistentVolumeAccessMode, *v1.PersistentVolumeMode, error) {
 	if storageClass == nil {
 		return nil, nil, errors.Errorf("no accessMode defined on DV and no StorageProfile")
 	}
 
 	storageProfile := &cdiv1.StorageProfile{}
-	err := c.Get(context.TODO(), types.NamespacedName{Name: storageClass.Name}, storageProfile)
-	if err != nil {
+	if err := client.Get(context.TODO(), types.NamespacedName{Name: storageClass.Name}, storageProfile); err != nil {
 		return nil, nil, errors.Wrap(err, "cannot get StorageProfile")
 	}
 
@@ -227,15 +250,14 @@ func getDefaultVolumeAndAccessMode(c client.Client, storageClass *storagev1.Stor
 	return nil, nil, errors.Errorf("no accessMode defined DV nor on StorageProfile for %s StorageClass", storageClass.Name)
 }
 
-func getDefaultVolumeMode(c client.Client, storageClass *storagev1.StorageClass, pvcAccessModes []v1.PersistentVolumeAccessMode) (*v1.PersistentVolumeMode, error) {
+func getDefaultVolumeMode(client client.Client, storageClass *storagev1.StorageClass, pvcAccessModes []v1.PersistentVolumeAccessMode) (*v1.PersistentVolumeMode, error) {
 	if storageClass == nil {
 		// fallback to k8s defaults
 		return nil, nil
 	}
 
 	storageProfile := &cdiv1.StorageProfile{}
-	err := c.Get(context.TODO(), types.NamespacedName{Name: storageClass.Name}, storageProfile)
-	if err != nil {
+	if err := client.Get(context.TODO(), types.NamespacedName{Name: storageClass.Name}, storageProfile); err != nil {
 		return nil, errors.Wrap(err, "cannot get StorageProfile")
 	}
 	if len(storageProfile.Status.ClaimPropertySets) > 0 {
@@ -261,14 +283,13 @@ func getDefaultVolumeMode(c client.Client, storageClass *storagev1.StorageClass,
 	return nil, nil
 }
 
-func getDefaultAccessModes(c client.Client, storageClass *storagev1.StorageClass, pvcVolumeMode *v1.PersistentVolumeMode) ([]v1.PersistentVolumeAccessMode, error) {
+func getDefaultAccessModes(client client.Client, storageClass *storagev1.StorageClass, pvcVolumeMode *v1.PersistentVolumeMode) ([]v1.PersistentVolumeAccessMode, error) {
 	if storageClass == nil {
 		return nil, errors.Errorf("no accessMode defined on DV, no StorageProfile ")
 	}
 
 	storageProfile := &cdiv1.StorageProfile{}
-	err := c.Get(context.TODO(), types.NamespacedName{Name: storageClass.Name}, storageProfile)
-	if err != nil {
+	if err := client.Get(context.TODO(), types.NamespacedName{Name: storageClass.Name}, storageProfile); err != nil {
 		return nil, errors.Wrap(err, "no accessMode defined on DV, cannot get StorageProfile")
 	}
 
@@ -292,25 +313,6 @@ func getDefaultAccessModes(c client.Client, storageClass *storagev1.StorageClass
 
 	// no accessMode configured on storageProfile
 	return nil, errors.Errorf("no accessMode defined on StorageProfile for %s StorageClass", storageClass.Name)
-}
-
-func resolveVolumeSize(c client.Client, dvSpec cdiv1.DataVolumeSpec, pvcSpec *v1.PersistentVolumeClaimSpec) (*resource.Quantity, error) {
-	// resources.requests[storage] - just copy it to pvc,
-	requestedSize, found := dvSpec.Storage.Resources.Requests[v1.ResourceStorage]
-
-	if !found {
-		// Storage size can be empty when cloning
-		isClone := dvSpec.Source.PVC != nil || dvSpec.Source.Snapshot != nil
-		if isClone {
-			return &requestedSize, nil
-		}
-		return nil, errors.Errorf("Datavolume Spec is not valid - missing storage size")
-	}
-
-	// disk or image size, inflate it with overhead
-	requestedSize, err := cc.InflateSizeWithOverhead(context.TODO(), c, requestedSize.Value(), pvcSpec)
-
-	return &requestedSize, err
 }
 
 // storageClassCSIDriverExists returns true if the passed storage class has CSI drivers available
@@ -484,10 +486,10 @@ func setAnnOwnedByDataVolume(dest, obj metav1.Object) error {
 	return nil
 }
 
+// CheckVolumeSatisfyClaim checks if the volume requested by the claim satisfies the requirements of the claim
 // adapted from k8s.io/kubernetes/pkg/controller/volume/persistentvolume/pv_controller.go
-// checkVolumeSatisfyClaim checks if the volume requested by the claim satisfies the requirements of the claim
-func checkVolumeSatisfyClaim(volume *v1.PersistentVolume, claim *v1.PersistentVolumeClaim) error {
-	requestedQty := claim.Spec.Resources.Requests[v1.ResourceName(v1.ResourceStorage)]
+func CheckVolumeSatisfyClaim(volume *corev1.PersistentVolume, claim *corev1.PersistentVolumeClaim) error {
+	requestedQty := claim.Spec.Resources.Requests[corev1.ResourceName(corev1.ResourceStorage)]
 	requestedSize := requestedQty.Value()
 
 	// check if PV's DeletionTimeStamp is set, if so, return error.
@@ -495,7 +497,7 @@ func checkVolumeSatisfyClaim(volume *v1.PersistentVolume, claim *v1.PersistentVo
 		return fmt.Errorf("the volume is marked for deletion %q", volume.Name)
 	}
 
-	volumeQty := volume.Spec.Capacity[v1.ResourceStorage]
+	volumeQty := volume.Spec.Capacity[corev1.ResourceStorage]
 	volumeSize := volumeQty.Value()
 	if volumeSize < requestedSize {
 		return fmt.Errorf("requested PV is too small")
@@ -516,8 +518,4 @@ func checkVolumeSatisfyClaim(volume *v1.PersistentVolume, claim *v1.PersistentVo
 	}
 
 	return nil
-}
-
-func getReconcileRequest(obj client.Object) reconcile.Request {
-	return reconcile.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
 }

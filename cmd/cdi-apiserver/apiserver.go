@@ -20,20 +20,29 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 
 	"github.com/kelseyhightower/envconfig"
-
 	snapclient "github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned"
 	"github.com/pkg/errors"
+
+	corev1 "k8s.io/api/core/v1"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	aggregatorclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
+
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	rtclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 
+	cdiv1 "kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1"
 	"kubevirt.io/containerized-data-importer/pkg/apiserver"
 	cdiclient "kubevirt.io/containerized-data-importer/pkg/client/clientset/versioned"
 	"kubevirt.io/containerized-data-importer/pkg/common"
@@ -103,6 +112,9 @@ func main() {
 		klog.Fatalf("Unable to get environment variables: %v\n", errors.WithStack(err))
 	}
 
+	utilruntime.Must(corev1.AddToScheme(scheme.Scheme))
+	utilruntime.Must(cdiv1.AddToScheme(scheme.Scheme))
+
 	cfg, err := clientcmd.BuildConfigFromFlags(kubeURL, configPath)
 	if err != nil {
 		klog.Fatalf("Unable to get kube config: %v\n", errors.WithStack(err))
@@ -111,6 +123,26 @@ func main() {
 	client, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		klog.Fatalf("Unable to get kube client: %v\n", errors.WithStack(err))
+	}
+
+	cache, err := cache.New(cfg, cache.Options{})
+	if err != nil {
+		klog.Fatalf("Unable to get cache: %v\n", errors.WithStack(err))
+	}
+
+	go func() {
+		if err := cache.Start(context.TODO()); err != nil {
+			klog.Fatalf("Unable to start cache: %v\n", errors.WithStack(err))
+		}
+	}()
+
+	if !cache.WaitForCacheSync(context.TODO()) {
+		klog.Fatalf("Unable to sync cache\n")
+	}
+
+	cachedClient, err := cluster.DefaultNewClient(cache, cfg, rtclient.Options{})
+	if err != nil {
+		klog.Fatalf("Unable to create caching client: %v\n", errors.WithStack(err))
 	}
 
 	aggregatorClient := aggregatorclient.NewForConfigOrDie(cfg)
@@ -143,6 +175,7 @@ func main() {
 
 	cdiAPIApp, err := apiserver.NewCdiAPIServer(defaultHost,
 		defaultPort,
+		cachedClient,
 		client,
 		aggregatorClient,
 		cdiClient,
@@ -153,7 +186,7 @@ func main() {
 		certWatcher,
 		installerLabels)
 	if err != nil {
-		klog.Fatalf("Upload api failed to initialize: %v\n", errors.WithStack(err))
+		klog.Fatalf("CDI API server failed to initialize: %v\n", errors.WithStack(err))
 	}
 
 	go func() {

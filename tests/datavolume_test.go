@@ -1759,15 +1759,20 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 		testFile := utils.DefaultPvcMountPath + "/source.txt"
 		fillCommand := "echo \"" + fillData + "\" >> " + testFile
 
-		createDataVolumeForImport := func(f *framework.Framework, storageSpec cdiv1.StorageSpec) *cdiv1.DataVolume {
+		createLabeledDataVolumeForImport := func(f *framework.Framework, storageSpec cdiv1.StorageSpec, labels map[string]string) *cdiv1.DataVolume {
 			dataVolume := utils.NewDataVolumeWithHTTPImportAndStorageSpec(
 				dataVolumeName, "1Gi", fmt.Sprintf(utils.TinyCoreQcow2URL, f.CdiInstallNs))
 
 			dataVolume.Spec.Storage = &storageSpec
+			dataVolume.Labels = labels
 
 			dv, err := utils.CreateDataVolumeFromDefinition(f.CdiClient, f.Namespace.Name, dataVolume)
 			Expect(err).ToNot(HaveOccurred())
 			return dv
+		}
+
+		createDataVolumeForImport := func(f *framework.Framework, storageSpec cdiv1.StorageSpec) *cdiv1.DataVolume {
+			return createLabeledDataVolumeForImport(f, storageSpec, nil)
 		}
 
 		createDataVolumeForUpload := func(f *framework.Framework, storageSpec cdiv1.StorageSpec) *cdiv1.DataVolume {
@@ -1979,7 +1984,19 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 			Expect(*pvc.Spec.StorageClassName).To(SatisfyAll(Not(BeNil()), Equal(defaultScName)))
 		})
 
-		It("[test_id:5912]Import fails creating a PVC from DV without accessModes and volume mode, no profile", func() {
+		verifyControllerRenderingEvent := func(events string) bool {
+			return strings.Contains(events, controller.ErrClaimNotValid) && strings.Contains(events, "no accessMode defined DV nor on StorageProfile")
+		}
+
+		verifyControllerRenderingNoDefaultScEvent := func(events string) bool {
+			return strings.Contains(events, controller.ErrClaimNotValid) && strings.Contains(events, "PVC spec is missing accessMode and no storageClass to choose profile")
+		}
+
+		verifyWebhookRenderingEvent := func(events string) bool {
+			return strings.Contains(events, controller.NotFound) && strings.Contains(events, "No PVC found")
+		}
+
+		DescribeTable("Import fails creating a PVC from DV without accessModes and volume mode, no profile", func(webhookRenderingLabel string, verifyEvent func(string) bool) {
 			// assumes local is available and has no volumeMode
 			storageProfileName := findStorageProfileWithoutAccessModes(f.CrClient)
 			By(fmt.Sprintf("creating new datavolume %s without accessModes", dataVolumeName))
@@ -1994,7 +2011,8 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 					},
 				},
 			}
-			dataVolume := createDataVolumeForImport(f, spec)
+			dataVolume := createLabeledDataVolumeForImport(f, spec,
+				map[string]string{common.PvcUseStorageProfileLabel: webhookRenderingLabel})
 
 			By("verifying pvc not created")
 			_, err := utils.FindPVC(f.K8sClient, dataVolume.Namespace, dataVolume.Name)
@@ -2006,14 +2024,17 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 				events, err := f.RunKubectlCommand("get", "events", "-n", dataVolume.Namespace, "--field-selector=involvedObject.kind=DataVolume")
 				if err == nil {
 					fmt.Fprintf(GinkgoWriter, "%s", events)
-					return strings.Contains(events, controller.ErrClaimNotValid) && strings.Contains(events, "DataVolume.storage spec is missing accessMode and volumeMode, cannot get access mode from StorageProfile")
+					return verifyEvent(events)
 				}
 				fmt.Fprintf(GinkgoWriter, "ERROR: %s\n", err.Error())
 				return false
 			}, timeout, pollingInterval).Should(BeTrue())
-		})
+		},
+			Entry("[test_id:5912] (controller rendering)", "false", verifyControllerRenderingEvent),
+			Entry("[test_id:XXXX] (webhook rendering)", "true", verifyWebhookRenderingEvent),
+		)
 
-		It("[test_id:8383]Import fails when no default storage class, and recovers when default is set", func() {
+		DescribeTable("Import fails when no default storage class, and recovers when default is set", func(webhookRenderingLabel string, verifyEvent func(string) bool) {
 			By("updating to no default storage class")
 			defaultSc.Annotations[controller.AnnDefaultStorageClass] = "false"
 			defaultSc, err = f.K8sClient.StorageV1().StorageClasses().Update(context.TODO(), defaultSc, metav1.UpdateOptions{})
@@ -2028,7 +2049,8 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 					},
 				},
 			}
-			dataVolume := createDataVolumeForImport(f, spec)
+			dataVolume := createLabeledDataVolumeForImport(f, spec,
+				map[string]string{common.PvcUseStorageProfileLabel: webhookRenderingLabel})
 
 			By("verifying event occurred")
 			Eventually(func() bool {
@@ -2036,7 +2058,7 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 				events, err := f.RunKubectlCommand("get", "events", "-n", dataVolume.Namespace, "--field-selector=involvedObject.kind=DataVolume")
 				if err == nil {
 					fmt.Fprintf(GinkgoWriter, "%s", events)
-					return strings.Contains(events, controller.ErrClaimNotValid) && strings.Contains(events, dvc.MessageErrStorageClassNotFound)
+					return verifyEvent(events)
 				}
 				fmt.Fprintf(GinkgoWriter, "ERROR: %s\n", err.Error())
 				return false
@@ -2054,9 +2076,12 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 			By("verifying pvc created")
 			_, err = utils.WaitForPVC(f.K8sClient, dataVolume.Namespace, dataVolume.Name)
 			Expect(err).ToNot(HaveOccurred())
-		})
+		},
+			Entry("[test_id:8383] (controller rendering)", "false", verifyControllerRenderingNoDefaultScEvent),
+			Entry("[test_id:XXXX] (webhook rendering)", "true", verifyWebhookRenderingEvent),
+		)
 
-		It("[test_id:5913]Import recovers when user adds accessModes to profile", func() {
+		DescribeTable("Import recovers when user adds accessModes to profile", func(webhookRenderingLabel string, verifyEvent func(string) bool) {
 			// assumes local is available and has no volumeMode
 			storageProfileName := findStorageProfileWithoutAccessModes(f.CrClient)
 			By(fmt.Sprintf("creating new datavolume %s without accessModes", dataVolumeName))
@@ -2071,7 +2096,8 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 					},
 				},
 			}
-			dataVolume := createDataVolumeForImport(f, spec)
+			dataVolume := createLabeledDataVolumeForImport(f, spec,
+				map[string]string{common.PvcUseStorageProfileLabel: webhookRenderingLabel})
 
 			By("verifying pvc not created")
 			_, err := utils.FindPVC(f.K8sClient, dataVolume.Namespace, dataVolume.Name)
@@ -2083,7 +2109,7 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 				events, err := f.RunKubectlCommand("get", "events", "-n", dataVolume.Namespace, "--field-selector=involvedObject.kind=DataVolume")
 				if err == nil {
 					fmt.Fprintf(GinkgoWriter, "%s", events)
-					return strings.Contains(events, controller.ErrClaimNotValid) && strings.Contains(events, "DataVolume.storage spec is missing accessMode and volumeMode, cannot get access mode from StorageProfile")
+					return verifyEvent(events)
 				}
 				fmt.Fprintf(GinkgoWriter, "ERROR: %s\n", err.Error())
 				return false
@@ -2103,7 +2129,10 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 
 			By("Restore the profile")
 			updateStorageProfileSpec(f.CrClient, storageProfileName, *originalProfileSpec)
-		})
+		},
+			Entry("[test_id:5913] (controller rendering)", "false", verifyControllerRenderingEvent),
+			Entry("[test_id:XXXX] (webhook rendering)", "true", verifyWebhookRenderingEvent),
+		)
 
 		It("[test_id:6483]Import pod should not have size corrected on block", func() {
 			SetFilesystemOverhead(f, "0.50", "0.50")
@@ -2432,26 +2461,9 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 			}
 		})
 
-		DescribeTable("import DV using StorageSpec without AccessModes, PVC is created only when", func(scName string, scFunc func(string)) {
-			if utils.IsDefaultSCNoProvisioner() {
-				Skip("Default storage class has no provisioner. The new storage class won't work")
-			}
-
-			By(fmt.Sprintf("verifying no storage class %s", testScName))
-			_, err := f.K8sClient.StorageV1().StorageClasses().Get(context.TODO(), scName, metav1.GetOptions{})
-			Expect(err).To(HaveOccurred())
-
-			By(fmt.Sprintf("creating new datavolume %s with StorageClassName %s", dataVolumeName, scName))
-			dataVolume := utils.NewDataVolumeWithHTTPImportAndStorageSpec(
-				dataVolumeName, "100Mi", fmt.Sprintf(utils.TinyCoreQcow2URL, f.CdiInstallNs))
-			dataVolume.Spec.Storage.StorageClassName = pointer.String(scName)
-			dataVolume.Spec.Storage.AccessModes = nil
-
-			dataVolume, err = utils.CreateDataVolumeFromDefinition(f.CdiClient, f.Namespace.Name, dataVolume)
-			Expect(err).ToNot(HaveOccurred())
-
+		verifyControllerRenderingEventAndConditions := func(dv *cdiv1.DataVolume) {
 			By("verifying event occurred")
-			f.ExpectEvent(dataVolume.Namespace).Should(And(ContainSubstring(controller.ErrClaimNotValid), ContainSubstring(dvc.MessageErrStorageClassNotFound)))
+			f.ExpectEvent(dv.Namespace).Should(And(ContainSubstring(controller.ErrClaimNotValid), ContainSubstring(dvc.MessageErrStorageClassNotFound)))
 
 			By("verifying conditions")
 			boundCondition := &cdiv1.DataVolumeCondition{
@@ -2466,7 +2478,48 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 				Message: dvc.MessageErrStorageClassNotFound,
 				Reason:  controller.ErrClaimNotValid,
 			}
-			utils.WaitForConditions(f, dataVolume.Name, f.Namespace.Name, timeout, pollingInterval, boundCondition, readyCondition)
+			utils.WaitForConditions(f, dv.Name, f.Namespace.Name, timeout, pollingInterval, boundCondition, readyCondition)
+
+		}
+
+		verifyWebhookRenderingEventAndConditions := func(dv *cdiv1.DataVolume) {
+			By("verifying event occurred")
+			f.ExpectEvent(dv.Namespace).Should(And(ContainSubstring(controller.NotFound), ContainSubstring("No PVC found")))
+
+			By("verifying conditions")
+			boundCondition := &cdiv1.DataVolumeCondition{
+				Type:    cdiv1.DataVolumeBound,
+				Status:  v1.ConditionUnknown,
+				Message: "No PVC found",
+				Reason:  controller.NotFound,
+			}
+			readyCondition := &cdiv1.DataVolumeCondition{
+				Type:   cdiv1.DataVolumeReady,
+				Status: v1.ConditionFalse,
+			}
+			utils.WaitForConditions(f, dv.Name, f.Namespace.Name, timeout, pollingInterval, boundCondition, readyCondition)
+		}
+
+		DescribeTable("import DV using StorageSpec without AccessModes, PVC is created only when", func(webhookRenderingLabel, scName string, dvFunc func(*cdiv1.DataVolume), scFunc func(string)) {
+			if utils.IsDefaultSCNoProvisioner() {
+				Skip("Default storage class has no provisioner. The new storage class won't work")
+			}
+
+			By(fmt.Sprintf("verifying no storage class %s", testScName))
+			_, err := f.K8sClient.StorageV1().StorageClasses().Get(context.TODO(), scName, metav1.GetOptions{})
+			Expect(err).To(HaveOccurred())
+
+			By(fmt.Sprintf("creating new datavolume %s with StorageClassName %s", dataVolumeName, scName))
+			dataVolume := utils.NewDataVolumeWithHTTPImportAndStorageSpec(
+				dataVolumeName, "100Mi", fmt.Sprintf(utils.TinyCoreQcow2URL, f.CdiInstallNs))
+			dataVolume.Labels = map[string]string{common.PvcUseStorageProfileLabel: webhookRenderingLabel}
+			dataVolume.Spec.Storage.StorageClassName = pointer.String(scName)
+			dataVolume.Spec.Storage.AccessModes = nil
+
+			dataVolume, err = utils.CreateDataVolumeFromDefinition(f.CdiClient, f.Namespace.Name, dataVolume)
+			Expect(err).ToNot(HaveOccurred())
+
+			dvFunc(dataVolume)
 
 			By("verifying pvc not created")
 			_, err = utils.FindPVC(f.K8sClient, dataVolume.Namespace, dataVolume.Name)
@@ -2484,9 +2537,12 @@ var _ = Describe("[vendor:cnv-qe@redhat.com][level:component]DataVolume tests", 
 			err = utils.WaitForDataVolumePhase(f, dataVolume.Namespace, cdiv1.Succeeded, dataVolume.Name)
 			Expect(err).ToNot(HaveOccurred())
 		},
-			Entry("[test_id:9922]the storage class is created", testScName, createStorageClass),
-			Entry("[test_id:9924]PV with the SC name is created", testScName, createPV),
-			Entry("[test_id:9925]PV with the SC name (\"\" blank) is created", "", createPV),
+			Entry("[test_id:9922]the storage class is created (controller rendering)", "false", testScName, verifyControllerRenderingEventAndConditions, createStorageClass),
+			Entry("[test_id:9924]PV with the SC name is created (controller rendering)", "false", testScName, verifyControllerRenderingEventAndConditions, createPV),
+			Entry("[test_id:9925]PV with the SC name (\"\" blank) is created (controller rendering)", "false", "", verifyControllerRenderingEventAndConditions, createPV),
+			Entry("[test_id:XXXX]the storage class is created (webhook rendering)", "true", testScName, verifyWebhookRenderingEventAndConditions, createStorageClass),
+			Entry("[test_id:XXXX]PV with the SC name is created (webhook rendering)", "true", testScName, verifyWebhookRenderingEventAndConditions, createPV),
+			Entry("[test_id:XXXX]PV with the SC name (\"\" blank) is created (webhook rendering)", "true", "", verifyWebhookRenderingEventAndConditions, createPV),
 		)
 
 		newDataVolumeWithStorageSpec := func(scName string) *cdiv1.DataVolume {

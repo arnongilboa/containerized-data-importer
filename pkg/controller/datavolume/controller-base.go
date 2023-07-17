@@ -603,7 +603,7 @@ func (r *ReconcilerBase) getAvailableVolumesForDV(syncState *dvSyncState, log lo
 			pvc := &corev1.PersistentVolumeClaim{
 				Spec: *syncState.pvcSpec,
 			}
-			if err := checkVolumeSatisfyClaim(&pv, pvc); err != nil {
+			if err := CheckVolumeSatisfyClaim(&pv, pvc); err != nil {
 				continue
 			}
 			log.Info("Found matching volume for DV", "pv", pv.Name)
@@ -1038,6 +1038,15 @@ func (r *ReconcilerBase) newPersistentVolumeClaim(dataVolume *cdiv1.DataVolume, 
 		annotations[cc.AnnPriorityClassName] = dataVolume.Spec.PriorityClassName
 	}
 	annotations[cc.AnnPreallocationRequested] = strconv.FormatBool(cc.GetPreallocation(context.TODO(), r.client, dataVolume.Spec.Preallocation))
+
+	if dataVolume.Spec.Storage != nil && labels[common.PvcUseStorageProfileLabel] != "false" {
+		labels[common.PvcUseStorageProfileLabel] = "true"
+		if targetPvcSpec.VolumeMode == nil {
+			pvModeAuto := cdiv1.PersistentVolumeAuto
+			targetPvcSpec.VolumeMode = &pvModeAuto
+		}
+	}
+
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:   namespace,

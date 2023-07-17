@@ -31,9 +31,11 @@ import (
 	"github.com/appscode/jsonpatch"
 
 	admissionv1 "k8s.io/api/admission/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	snapclient "github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned"
 	cdiv1 "kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1"
@@ -60,6 +62,11 @@ func NewDataVolumeValidatingWebhook(k8sClient kubernetes.Interface, cdiClient cd
 func NewDataVolumeMutatingWebhook(k8sClient kubernetes.Interface, cdiClient cdiclient.Interface, key *rsa.PrivateKey) http.Handler {
 	generator := newCloneTokenGenerator(key)
 	return newAdmissionHandler(&dataVolumeMutatingWebhook{k8sClient: k8sClient, cdiClient: cdiClient, tokenGenerator: generator})
+}
+
+// NewPvcMutatingWebhook creates a new PvcMutation webhook
+func NewPvcMutatingWebhook(cachedClient client.Client, k8sClient kubernetes.Interface, cdiClient cdiclient.Interface) http.Handler {
+	return newAdmissionHandler(&pvcMutatingWebhook{cachedClient: cachedClient, k8sClient: k8sClient, cdiClient: cdiClient})
 }
 
 // NewCDIValidatingWebhook creates a new CDI validating webhook
@@ -190,6 +197,24 @@ func validateDataVolumeResource(ar admissionv1.AdmissionReview) error {
 			Group:    cdiv1.SchemeGroupVersion.Group,
 			Version:  cdiv1.SchemeGroupVersion.Version,
 			Resource: "datavolumes",
+		},
+	}
+	for _, resource := range resources {
+		if ar.Request.Resource == resource {
+			return nil
+		}
+	}
+
+	klog.Errorf("resource is %s but request is: %s", resources[0], ar.Request.Resource)
+	return fmt.Errorf("expect resource to be '%s'", resources[0].Resource)
+}
+
+func validatePvcResource(ar admissionv1.AdmissionReview) error {
+	resources := []metav1.GroupVersionResource{
+		{
+			Group:    corev1.SchemeGroupVersion.Group,
+			Version:  corev1.SchemeGroupVersion.Version,
+			Resource: "persistentvolumeclaims",
 		},
 	}
 	for _, resource := range resources {

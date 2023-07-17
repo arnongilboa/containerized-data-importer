@@ -30,6 +30,7 @@ import (
 
 	cdicorev1 "kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1"
 	cdiuploadv1 "kubevirt.io/containerized-data-importer-api/pkg/apis/upload/v1beta1"
+	"kubevirt.io/containerized-data-importer/pkg/common"
 	"kubevirt.io/containerized-data-importer/pkg/operator/resources/utils"
 )
 
@@ -50,6 +51,7 @@ func createDynamicAPIServerResources(args *FactoryArgs) []client.Object {
 		createAPIService("v1beta1", args.Namespace, args.Client, args.Logger),
 		createDataVolumeValidatingWebhook(args.Namespace, args.Client, args.Logger),
 		createDataVolumeMutatingWebhook(args.Namespace, args.Client, args.Logger),
+		createPvcMutatingWebhook(args.Namespace, args.Client, args.Logger),
 		createCDIValidatingWebhook(args.Namespace, args.Client, args.Logger),
 		createObjectTransferValidatingWebhook(args.Namespace, args.Client, args.Logger),
 		createDataImportCronValidatingWebhook(args.Namespace, args.Client, args.Logger),
@@ -94,6 +96,35 @@ func getAPIServerClusterPolicyRules() []rbacv1.PolicyRule {
 				"get",
 			},
 		},
+
+		{
+			APIGroups: []string{
+				"",
+			},
+			Resources: []string{
+				"persistentvolumes",
+			},
+			Verbs: []string{
+				"get",
+				"list",
+				"watch",
+			},
+		},
+
+		{
+			APIGroups: []string{
+				"storage.k8s.io",
+			},
+			Resources: []string{
+				"storageclasses",
+			},
+			Verbs: []string{
+				"get",
+				"list",
+				"watch",
+			},
+		},
+
 		{
 			APIGroups: []string{
 				"",
@@ -139,6 +170,21 @@ func getAPIServerClusterPolicyRules() []rbacv1.PolicyRule {
 				"get",
 			},
 		},
+
+		{
+			APIGroups: []string{
+				"cdi.kubevirt.io",
+			},
+			Resources: []string{
+				"storageprofiles",
+			},
+			Verbs: []string{
+				"get",
+				"list",
+				"watch",
+			},
+		},
+
 		{
 			APIGroups: []string{
 				"cdi.kubevirt.io",
@@ -148,6 +194,8 @@ func getAPIServerClusterPolicyRules() []rbacv1.PolicyRule {
 			},
 			Verbs: []string{
 				"get",
+				"list",
+				"watch",
 			},
 		},
 		{
@@ -594,6 +642,78 @@ func createDataVolumeMutatingWebhook(namespace string, c client.Client, l logr.L
 					"v1", "v1beta1",
 				},
 				ObjectSelector:     &metav1.LabelSelector{},
+				ReinvocationPolicy: &reinvocationNever,
+			},
+		},
+	}
+
+	if c == nil {
+		return whc
+	}
+
+	bundle := getAPIServerCABundle(namespace, c, l)
+	if bundle != nil {
+		whc.Webhooks[0].ClientConfig.CABundle = bundle
+	}
+
+	return whc
+}
+
+func createPvcMutatingWebhook(namespace string, c client.Client, l logr.Logger) *admissionregistrationv1.MutatingWebhookConfiguration {
+	path := "/pvc-mutate"
+	defaultServicePort := int32(443)
+	allScopes := admissionregistrationv1.AllScopes
+	exactPolicy := admissionregistrationv1.Exact
+	failurePolicy := admissionregistrationv1.Fail
+	defaultTimeoutSeconds := int32(10)
+	reinvocationNever := admissionregistrationv1.NeverReinvocationPolicy
+	sideEffect := admissionregistrationv1.SideEffectClassNone
+	whc := &admissionregistrationv1.MutatingWebhookConfiguration{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "admissionregistration.k8s.io/v1",
+			Kind:       "MutatingWebhookConfiguration",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cdi-api-pvc-mutate",
+			Labels: map[string]string{
+				utils.CDILabel: apiServerServiceName,
+			},
+		},
+		Webhooks: []admissionregistrationv1.MutatingWebhook{
+			{
+				Name: "pvc-mutate.cdi.kubevirt.io",
+				Rules: []admissionregistrationv1.RuleWithOperations{{
+					Operations: []admissionregistrationv1.OperationType{
+						admissionregistrationv1.Create,
+					},
+					Rule: admissionregistrationv1.Rule{
+						APIGroups:   []string{corev1.SchemeGroupVersion.Group},
+						APIVersions: []string{corev1.SchemeGroupVersion.Version},
+						Resources:   []string{"persistentvolumeclaims"},
+						Scope:       &allScopes,
+					},
+				}},
+				ClientConfig: admissionregistrationv1.WebhookClientConfig{
+					Service: &admissionregistrationv1.ServiceReference{
+						Namespace: namespace,
+						Name:      apiServerServiceName,
+						Path:      &path,
+						Port:      &defaultServicePort,
+					},
+				},
+				FailurePolicy:     &failurePolicy,
+				SideEffects:       &sideEffect,
+				MatchPolicy:       &exactPolicy,
+				NamespaceSelector: &metav1.LabelSelector{},
+				TimeoutSeconds:    &defaultTimeoutSeconds,
+				AdmissionReviewVersions: []string{
+					"v1",
+				},
+				ObjectSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						common.PvcUseStorageProfileLabel: "true",
+					},
+				},
 				ReinvocationPolicy: &reinvocationNever,
 			},
 		},

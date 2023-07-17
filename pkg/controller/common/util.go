@@ -438,22 +438,26 @@ func GetVolumeMode(pvc *corev1.PersistentVolumeClaim) corev1.PersistentVolumeMod
 func GetStorageClassByName(ctx context.Context, client client.Client, name *string) (*storagev1.StorageClass, error) {
 	// look up storage class by name
 	if name != nil {
+		if *name == "" {
+			return nil, nil
+		}
+
 		storageClass := &storagev1.StorageClass{}
 		if err := client.Get(ctx, types.NamespacedName{Name: *name}, storageClass); err != nil {
 			if k8serrors.IsNotFound(err) {
 				return nil, nil
 			}
-			klog.V(3).Info("Unable to retrieve storage class", "storage class name", *name)
-			return nil, errors.Errorf("unable to retrieve storage class %s", *name)
+			klog.V(3).Info("Unable to retrieve storage class", "storage class name", *name, "err", err.Error())
+			return nil, errors.Errorf("unable to retrieve storage class %s err %s", *name, err.Error())
 		}
 		return storageClass, nil
 	}
 	// No storage class found, just return nil for storage class and let caller deal with it.
-	return GetDefaultStorageClass(ctx, client)
+	return getDefaultStorageClass(ctx, client)
 }
 
-// GetDefaultStorageClass returns the default storage class or nil if none found
-func GetDefaultStorageClass(ctx context.Context, client client.Client) (*storagev1.StorageClass, error) {
+// getDefaultStorageClass returns the default storage class or nil if none found
+func getDefaultStorageClass(ctx context.Context, client client.Client) (*storagev1.StorageClass, error) {
 	storageClasses := &storagev1.StorageClassList{}
 	if err := client.List(ctx, storageClasses); err != nil {
 		klog.V(3).Info("Unable to retrieve available storage classes")
@@ -470,20 +474,23 @@ func GetDefaultStorageClass(ctx context.Context, client client.Client) (*storage
 
 // GetFilesystemOverheadForStorageClass determines the filesystem overhead defined in CDIConfig for the storageClass.
 func GetFilesystemOverheadForStorageClass(ctx context.Context, client client.Client, storageClassName *string) (cdiv1.Percent, error) {
+	if storageClassName != nil && *storageClassName == "" {
+		return "0", nil
+	}
+
 	cdiConfig := &cdiv1.CDIConfig{}
 	if err := client.Get(ctx, types.NamespacedName{Name: common.ConfigName}, cdiConfig); err != nil {
 		if k8serrors.IsNotFound(err) {
 			klog.V(1).Info("CDIConfig does not exist, pod will not start until it does")
 			return "0", nil
 		}
-
 		return "0", err
 	}
 
 	targetStorageClass, err := GetStorageClassByName(ctx, client, storageClassName)
 	if err != nil || targetStorageClass == nil {
 		klog.V(3).Info("Storage class", storageClassName, "not found, trying default storage class")
-		targetStorageClass, err = GetStorageClassByName(ctx, client, nil)
+		targetStorageClass, err = getDefaultStorageClass(ctx, client)
 		if err != nil {
 			klog.V(3).Info("No default storage class found, continuing with global overhead")
 			return cdiConfig.Status.FilesystemOverhead.Global, nil
@@ -1418,11 +1425,11 @@ func GetRequiredSpace(filesystemOverhead float64, requestedSpace int64) int64 {
 }
 
 // InflateSizeWithOverhead inflates a storage size with proper overhead calculations
-func InflateSizeWithOverhead(ctx context.Context, c client.Client, imgSize int64, pvcSpec *corev1.PersistentVolumeClaimSpec) (resource.Quantity, error) {
+func InflateSizeWithOverhead(ctx context.Context, client client.Client, imgSize int64, pvcSpec *corev1.PersistentVolumeClaimSpec) (resource.Quantity, error) {
 	var returnSize resource.Quantity
 
 	if util.ResolveVolumeMode(pvcSpec.VolumeMode) == corev1.PersistentVolumeFilesystem {
-		fsOverhead, err := GetFilesystemOverheadForStorageClass(ctx, c, pvcSpec.StorageClassName)
+		fsOverhead, err := GetFilesystemOverheadForStorageClass(ctx, client, pvcSpec.StorageClassName)
 		if err != nil {
 			return resource.Quantity{}, err
 		}

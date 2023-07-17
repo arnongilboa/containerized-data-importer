@@ -40,6 +40,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -86,19 +87,15 @@ var _ = Describe("All DataVolume Tests", func() {
 			}
 		})
 
-		DescribeTable("Should return nil when storage spec has no AccessModes and", func(scName *string) {
+		DescribeTable("Should not error when storage spec has no AccessModes and", func(scName *string) {
 			importDataVolume := newImportDataVolumeWithPvc("test-dv", nil)
 			importDataVolume.Spec.Storage = &cdiv1.StorageSpec{
 				StorageClassName: scName,
 			}
 
 			reconciler = createImportReconciler(importDataVolume)
-			res, err := reconciler.Reconcile(context.TODO(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}})
+			_, err := reconciler.Reconcile(context.TODO(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}})
 			Expect(err).ToNot(HaveOccurred())
-			Expect(res).To(Equal(reconcile.Result{}))
-
-			event := <-reconciler.recorder.(*record.FakeRecorder).Events
-			Expect(event).To(ContainSubstring(MessageErrStorageClassNotFound))
 		},
 			Entry("no StorageClassName, and no default storage class set", nil),
 			Entry("non-existing StorageClassName", pointer.String("nosuch")),
@@ -322,6 +319,9 @@ var _ = Describe("All DataVolume Tests", func() {
 			pvc := &corev1.PersistentVolumeClaim{}
 			err = reconciler.client.Get(context.TODO(), types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}, pvc)
 			Expect(err).ToNot(HaveOccurred())
+
+			err = mutatePVC(reconciler.client, pvc)
+			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Name).To(Equal("test-dv"))
 			Expect(pvc.Spec.StorageClassName).To(HaveValue(Equal("defaultSc")))
 		})
@@ -338,6 +338,9 @@ var _ = Describe("All DataVolume Tests", func() {
 
 			pvc := &corev1.PersistentVolumeClaim{}
 			err = reconciler.client.Get(context.TODO(), types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}, pvc)
+			Expect(err).ToNot(HaveOccurred())
+
+			err = mutatePVC(reconciler.client, pvc)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Name).To(Equal("test-dv"))
 			Expect(pvc.Spec.AccessModes).To(HaveLen(1))
@@ -356,6 +359,13 @@ var _ = Describe("All DataVolume Tests", func() {
 			reconciler = createImportReconciler(defaultStorageClass, importDataVolume)
 
 			_, err := reconciler.Reconcile(context.TODO(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}})
+			Expect(err).ToNot(HaveOccurred())
+
+			pvc := &corev1.PersistentVolumeClaim{}
+			err = reconciler.client.Get(context.TODO(), types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}, pvc)
+			Expect(err).ToNot(HaveOccurred())
+
+			err = mutatePVC(reconciler.client, pvc)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("missing storage size"))
 		})
@@ -371,7 +381,13 @@ var _ = Describe("All DataVolume Tests", func() {
 			reconciler = createImportReconciler(defaultStorageClass, importDataVolume)
 
 			_, err := reconciler.Reconcile(context.TODO(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}})
+			Expect(err).ToNot(HaveOccurred())
 
+			pvc := &corev1.PersistentVolumeClaim{}
+			err = reconciler.client.Get(context.TODO(), types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}, pvc)
+			Expect(err).ToNot(HaveOccurred())
+
+			err = mutatePVC(reconciler.client, pvc)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("missing storage size"))
 		})
@@ -399,11 +415,14 @@ var _ = Describe("All DataVolume Tests", func() {
 
 			_, err := reconciler.Reconcile(context.TODO(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}})
 			Expect(err).ToNot(HaveOccurred())
+
 			pvc := &corev1.PersistentVolumeClaim{}
 			err = reconciler.client.Get(context.TODO(), types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}, pvc)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Name).To(Equal("test-dv"))
 
+			err = mutatePVC(reconciler.client, pvc)
+			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Spec.AccessModes).To(HaveLen(1))
 			if contentType == cdiv1.DataVolumeKubeVirt {
 				Expect(pvc.Spec.AccessModes[0]).To(Equal(corev1.ReadOnlyMany))
@@ -441,11 +460,15 @@ var _ = Describe("All DataVolume Tests", func() {
 			reconciler = createImportReconciler(storageClass, storageProfile, importDataVolume)
 
 			_, err := reconciler.Reconcile(context.TODO(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}})
+			Expect(err).ToNot(HaveOccurred())
+
+			pvc := &corev1.PersistentVolumeClaim{}
+			err = reconciler.client.Get(context.TODO(), types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}, pvc)
+			Expect(err).ToNot(HaveOccurred())
+
+			err = mutatePVC(reconciler.client, pvc)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("DataVolume with ContentType Archive cannot have block volumeMode"))
-			By("Checking error event recorded")
-			event := <-reconciler.recorder.(*record.FakeRecorder).Events
-			Expect(event).To(ContainSubstring("DataVolume with ContentType Archive cannot have block volumeMode"))
+			Expect(err.Error()).To(ContainSubstring("PVC with ContentType Archive cannot have block volumeMode"))
 		})
 
 		It("Should set on a PVC matching access mode from storageProfile to the DV given volume mode", func() {
@@ -477,6 +500,8 @@ var _ = Describe("All DataVolume Tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Name).To(Equal("test-dv"))
 
+			err = mutatePVC(reconciler.client, pvc)
+			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Spec.AccessModes).To(HaveLen(1))
 			Expect(pvc.Spec.AccessModes[0]).To(Equal(corev1.ReadWriteOnce))
 			Expect(*pvc.Spec.VolumeMode).To(Equal(FilesystemMode))
@@ -515,6 +540,9 @@ var _ = Describe("All DataVolume Tests", func() {
 			err = reconciler.client.Get(context.TODO(), types.NamespacedName{Name: "test-dv", Namespace: metav1.NamespaceDefault}, pvc)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Name).To(Equal("test-dv"))
+
+			err = mutatePVC(reconciler.client, pvc)
+			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Spec.AccessModes).To(HaveLen(1))
 			Expect(pvc.Spec.AccessModes[0]).To(Equal(corev1.ReadWriteOnce))
 			Expect(*pvc.Spec.VolumeMode).To(Equal(FilesystemMode))
@@ -549,6 +577,8 @@ var _ = Describe("All DataVolume Tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Name).To(Equal("test-dv"))
 
+			err = mutatePVC(reconciler.client, pvc)
+			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Spec.AccessModes).To(HaveLen(1))
 			Expect(pvc.Spec.AccessModes[0]).To(Equal(corev1.ReadWriteOnce))
 			Expect(*pvc.Spec.VolumeMode).To(Equal(FilesystemMode))
@@ -579,6 +609,8 @@ var _ = Describe("All DataVolume Tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Name).To(Equal("test-dv"))
 
+			err = mutatePVC(reconciler.client, pvc)
+			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Spec.AccessModes).To(HaveLen(1))
 			Expect(pvc.Spec.AccessModes[0]).To(Equal(corev1.ReadOnlyMany))
 			Expect(*pvc.Spec.VolumeMode).To(Equal(BlockMode))
@@ -621,6 +653,8 @@ var _ = Describe("All DataVolume Tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Name).To(Equal("test-dv"))
 
+			err = mutatePVC(reconciler.client, pvc)
+			Expect(err).ToNot(HaveOccurred())
 			Expect(pvc.Spec.AccessModes).To(HaveLen(1))
 			Expect(pvc.Spec.AccessModes[0]).To(Equal(corev1.ReadOnlyMany))
 			Expect(*pvc.Spec.VolumeMode).To(Equal(BlockMode))
@@ -1945,4 +1979,12 @@ func createStorageClassWithBindingMode(name string, annotations map[string]strin
 			Annotations: annotations,
 		},
 	}
+}
+
+func getReconcileRequest(obj client.Object) reconcile.Request {
+	return reconcile.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
+}
+
+func mutatePVC(c client.Client, pvc *corev1.PersistentVolumeClaim) error {
+	return RenderPvc(context.TODO(), c, pvc)
 }
