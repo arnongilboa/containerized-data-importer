@@ -39,6 +39,7 @@ import (
 	cdiv1 "kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1"
 	"kubevirt.io/containerized-data-importer/pkg/common"
 	cc "kubevirt.io/containerized-data-importer/pkg/controller/common"
+	featuregates "kubevirt.io/containerized-data-importer/pkg/feature-gates"
 )
 
 const (
@@ -86,7 +87,13 @@ func renderPvcSpec(client client.Client, recorder record.EventRecorder, log logr
 
 func pvcFromStorage(client client.Client, recorder record.EventRecorder, log logr.Logger, dv *cdiv1.DataVolume, pvc *v1.PersistentVolumeClaim) (*v1.PersistentVolumeClaimSpec, error) {
 	var pvcSpec *v1.PersistentVolumeClaimSpec
-	shouldRender := dv.Labels[common.PvcUseStorageProfileLabel] == "false"
+
+	isWebhookRenderingEnabled, err := featuregates.IsWebhookPvcRenderingEnabled(client)
+	if err != nil {
+		return nil, err
+	}
+
+	shouldRender := !isWebhookRenderingEnabled || dv.Labels[common.PvcUseStorageProfileLabel] == "false"
 
 	if pvc == nil {
 		pvcSpec = copyStorageAsPvc(log, dv.Spec.Storage)

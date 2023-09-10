@@ -36,6 +36,7 @@ import (
 
 	restful "github.com/emicklei/go-restful/v3"
 	"github.com/pkg/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
@@ -49,6 +50,7 @@ import (
 	"kubevirt.io/containerized-data-importer/pkg/apiserver/webhooks"
 	cdiclient "kubevirt.io/containerized-data-importer/pkg/client/clientset/versioned"
 	"kubevirt.io/containerized-data-importer/pkg/common"
+	featuregates "kubevirt.io/containerized-data-importer/pkg/feature-gates"
 	"kubevirt.io/containerized-data-importer/pkg/keys"
 	"kubevirt.io/containerized-data-importer/pkg/token"
 	"kubevirt.io/containerized-data-importer/pkg/util"
@@ -77,6 +79,8 @@ const (
 	populatorValidatePath = "/populator-validate"
 
 	healthzPath = "/healthz"
+
+	retryTimeoutSec = 60
 )
 
 var uploadTokenVersions = []string{"v1beta1"}
@@ -227,9 +231,20 @@ func (app *cdiAPIApp) Start(ch <-chan struct{}) error {
 }
 
 func (app *cdiAPIApp) getKeysAndCerts() error {
+	var privateKey *rsa.PrivateKey
+	var err error
 	namespace := util.GetNamespace()
 
-	privateKey, err := keys.GetOrCreatePrivateKey(app.client, namespace, APISigningKeySecretName, app.installerLabels)
+	retryUntil(
+		func() {
+			privateKey, err = keys.GetOrCreatePrivateKey(app.client, namespace, APISigningKeySecretName, app.installerLabels)
+		},
+		func() bool {
+			return err == nil || !k8serrors.IsForbidden(err)
+		},
+		retryTimeoutSec,
+	)
+
 	if err != nil {
 		return errors.Wrap(err, "Error getting/creating signing key")
 	}
@@ -533,7 +548,27 @@ func (app *cdiAPIApp) createDataVolumeMutatingWebhook() error {
 }
 
 func (app *cdiAPIApp) createPvcMutatingWebhook() error {
-	app.container.ServeMux.Handle(pvcMutatePath, webhooks.NewPvcMutatingWebhook(app.cachedClient, app.client, app.cdiClient))
+	var enabled bool
+	var err error
+
+	retryUntil(
+		func() {
+			enabled, err = featuregates.IsWebhookPvcRenderingEnabled(app.cachedClient)
+		},
+		func() bool {
+			return enabled || (err != nil && !k8serrors.IsNotFound(err))
+		},
+		retryTimeoutSec,
+	)
+
+	if err != nil {
+		return errors.Errorf("failed to check feature gates: %s", err)
+	}
+
+	if enabled {
+		app.container.ServeMux.Handle(pvcMutatePath, webhooks.NewPvcMutatingWebhook(app.cachedClient, app.client, app.cdiClient))
+	}
+
 	return nil
 }
 
@@ -567,5 +602,15 @@ func writeJSONResponse(response *restful.Response, value any) {
 	writeErr := response.WriteAsJson(value)
 	if writeErr != nil {
 		klog.Error("failed to send response", writeErr)
+	}
+}
+
+func retryUntil(iteration func(), breakCondition func() bool, timeoutSec int) {
+	for i := 0; i < timeoutSec; i++ {
+		iteration()
+		if breakCondition() {
+			break
+		}
+		time.Sleep(time.Second)
 	}
 }

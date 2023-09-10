@@ -104,14 +104,14 @@ var _ = Describe("Test PVC annotations status", func() {
 
 	It("Should NOT be interesting if NOT BOUND, and endpoint and source is set, and honorWaitForFirstConsumerEnabled", func() {
 		r := createImportReconciler()
-		r.featureGates = &FakeFeatureGates{honorWaitForFirstConsumerEnabled: true}
+		r.featureGates = &FakeFeatureGates{honorWaitForFirstConsumerEnabled: true, webhookPvcRenderingEnabled: true}
 		testPvc := createPendingPvc("testPvc1", "default", map[string]string{cc.AnnPodPhase: string(corev1.PodPending), cc.AnnEndpoint: testEndPoint, cc.AnnSource: cc.SourceHTTP}, nil)
 		Expect(r.shouldReconcilePVC(testPvc, importLog)).To(BeFalse())
 	})
 
 	It("Should be interesting if NOT BOUND, and endpoint and source is set, and honorWaitForFirstConsumerEnabled and isImmediateBindingRequested is requested", func() {
 		r := createImportReconciler()
-		r.featureGates = &FakeFeatureGates{honorWaitForFirstConsumerEnabled: true}
+		r.featureGates = &FakeFeatureGates{honorWaitForFirstConsumerEnabled: true, webhookPvcRenderingEnabled: true}
 		testPvc := createPendingPvc("testPvc1", "default", map[string]string{
 			cc.AnnPodPhase:         string(corev1.PodPending),
 			cc.AnnEndpoint:         testEndPoint,
@@ -122,7 +122,7 @@ var _ = Describe("Test PVC annotations status", func() {
 	})
 	It("Should be interesting if NOT BOUND, and endpoint and source is set, and honorWaitForFirstConsumerEnabled is false and isImmediateBindingRequested is requested", func() {
 		r := createImportReconciler()
-		r.featureGates = &FakeFeatureGates{honorWaitForFirstConsumerEnabled: false}
+		r.featureGates = &FakeFeatureGates{honorWaitForFirstConsumerEnabled: false, webhookPvcRenderingEnabled: true}
 		testPvc := createPendingPvc("testPvc1", "default", map[string]string{
 			cc.AnnPodPhase:         string(corev1.PodPending),
 			cc.AnnEndpoint:         testEndPoint,
@@ -1125,10 +1125,15 @@ func createImportTestEnv(podEnvVar *importPodEnvVar, uid string) []corev1.EnvVar
 
 type FakeFeatureGates struct {
 	honorWaitForFirstConsumerEnabled bool
+	webhookPvcRenderingEnabled       bool
 }
 
 func (f *FakeFeatureGates) HonorWaitForFirstConsumerEnabled() (bool, error) {
 	return f.honorWaitForFirstConsumerEnabled, nil
+}
+
+func (f *FakeFeatureGates) WebhookPvcRenderingEnabled() (bool, error) {
+	return f.webhookPvcRenderingEnabled, nil
 }
 
 func createPendingPvc(name, ns string, annotations, labels map[string]string) *v1.PersistentVolumeClaim {

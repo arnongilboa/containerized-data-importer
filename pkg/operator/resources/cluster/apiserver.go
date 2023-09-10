@@ -31,6 +31,7 @@ import (
 	cdicorev1 "kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1"
 	cdiuploadv1 "kubevirt.io/containerized-data-importer-api/pkg/apis/upload/v1beta1"
 	"kubevirt.io/containerized-data-importer/pkg/common"
+	featuregates "kubevirt.io/containerized-data-importer/pkg/feature-gates"
 	"kubevirt.io/containerized-data-importer/pkg/operator/resources/utils"
 )
 
@@ -47,16 +48,22 @@ func createStaticAPIServerResources(args *FactoryArgs) []client.Object {
 }
 
 func createDynamicAPIServerResources(args *FactoryArgs) []client.Object {
-	return []client.Object{
+	objs := []client.Object{
 		createAPIService("v1beta1", args.Namespace, args.Client, args.Logger),
 		createDataVolumeValidatingWebhook(args.Namespace, args.Client, args.Logger),
 		createDataVolumeMutatingWebhook(args.Namespace, args.Client, args.Logger),
-		createPvcMutatingWebhook(args.Namespace, args.Client, args.Logger),
 		createCDIValidatingWebhook(args.Namespace, args.Client, args.Logger),
 		createObjectTransferValidatingWebhook(args.Namespace, args.Client, args.Logger),
 		createDataImportCronValidatingWebhook(args.Namespace, args.Client, args.Logger),
 		createPopulatorsValidatingWebhook(args.Namespace, args.Client, args.Logger),
 	}
+
+	enabled, err := featuregates.IsWebhookPvcRenderingEnabled(args.Client)
+	if err == nil && enabled {
+		objs = append(objs, createPvcMutatingWebhook(args.Namespace, args.Client, args.Logger))
+	}
+
+	return objs
 }
 
 func getAPIServerClusterPolicyRules() []rbacv1.PolicyRule {

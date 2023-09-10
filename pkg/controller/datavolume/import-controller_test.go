@@ -1824,7 +1824,10 @@ func createImportReconciler(objects ...runtime.Object) *ImportReconciler {
 	cdiConfig.Status = cdiv1.CDIConfigStatus{
 		ScratchSpaceStorageClass: testStorageClass,
 	}
-	cdiConfig.Spec.FeatureGates = []string{featuregates.HonorWaitForFirstConsumer}
+	cdiConfig.Spec.FeatureGates = []string{
+		featuregates.HonorWaitForFirstConsumer,
+		featuregates.WebhookPvcRendering,
+	}
 
 	objs := []runtime.Object{}
 	objs = append(objs, objects...)

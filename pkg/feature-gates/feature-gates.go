@@ -14,12 +14,15 @@ import (
 const (
 	// HonorWaitForFirstConsumer - if enabled will not schedule worker pods on a storage with WaitForFirstConsumer binding mode
 	HonorWaitForFirstConsumer = "HonorWaitForFirstConsumer"
+
+	// WebhookPvcRendering - if enabled will deploy PVC mutating webhook for PVC rendering instead of the DV controller
+	WebhookPvcRendering = "WebhookPvcRendering"
 )
 
 // FeatureGates is a util for determining whether an optional feature is enabled or not.
 type FeatureGates interface {
-	// HonorWaitForFirstConsumerEnabled - see the HonorWaitForFirstConsumer const
 	HonorWaitForFirstConsumerEnabled() (bool, error)
+	WebhookPvcRenderingEnabled() (bool, error)
 }
 
 // CDIConfigFeatureGates is a util for determining whether an optional feature is enabled or not.
@@ -58,4 +61,15 @@ func (f *CDIConfigFeatureGates) getConfig() ([]string, error) {
 // HonorWaitForFirstConsumerEnabled - see the HonorWaitForFirstConsumer const
 func (f *CDIConfigFeatureGates) HonorWaitForFirstConsumerEnabled() (bool, error) {
 	return f.isFeatureGateEnabled(HonorWaitForFirstConsumer)
+}
+
+// WebhookPvcRenderingEnabled tells if webhook PVC rendering is enabled
+func (f *CDIConfigFeatureGates) WebhookPvcRenderingEnabled() (bool, error) {
+	return f.isFeatureGateEnabled(WebhookPvcRendering)
+}
+
+// IsWebhookPvcRenderingEnabled tells if webhook PVC rendering is enabled
+func IsWebhookPvcRenderingEnabled(c client.Client) (bool, error) {
+	gates := NewFeatureGates(c)
+	return gates.WebhookPvcRenderingEnabled()
 }
