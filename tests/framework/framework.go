@@ -138,7 +138,6 @@ func NewFramework(prefix string, config ...Config) *Framework {
 	cfg := Config{
 		FeatureGates: []string{
 			featuregates.HonorWaitForFirstConsumer,
-			featuregates.WebhookPvcRendering,
 		},
 	}
 	if len(config) > 0 {
