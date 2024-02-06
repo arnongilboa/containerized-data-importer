@@ -196,6 +196,8 @@ func (r *SnapshotCloneReconciler) syncSnapshotClone(log logr.Logger, req reconci
 		return syncRes, nil
 	}
 
+	r.log.Info("XXXXXXXXXXXXXXXXXXX", "UID", datavolume.UID)
+
 	if addedToken, err := r.ensureExtendedTokenDV(datavolume); err != nil {
 		return syncRes, err
 	} else if addedToken {

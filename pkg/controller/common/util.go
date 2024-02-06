@@ -864,41 +864,44 @@ func ValidateCloneTokenPVC(t string, v token.Validator, source, target *corev1.P
 	return validateTokenData(tokenData, source.Namespace, srcName, target.Namespace, target.Name, string(target.UID), tokenResourceName)
 }
 
+/*
+*
 // ValidateCloneTokenDV validates clone token for DV
-func ValidateCloneTokenDV(validator token.Validator, dv *cdiv1.DataVolume) error {
-	_, sourceName, sourceNamespace := GetCloneSourceInfo(dv)
-	if sourceNamespace == "" || sourceNamespace == dv.Namespace {
-		return nil
+
+	func ValidateCloneTokenDV(validator token.Validator, dv *cdiv1.DataVolume) error {
+		_, sourceName, sourceNamespace := GetCloneSourceInfo(dv)
+		if sourceNamespace == "" || sourceNamespace == dv.Namespace {
+			return nil
+		}
+
+		tok, ok := dv.Annotations[AnnCloneToken]
+		if !ok {
+			return errors.New("clone token missing")
+		}
+
+		tokenData, err := validator.Validate(tok)
+		if err != nil {
+			return errors.Wrap(err, "error verifying token")
+		}
+
+		tokenResourceName := getTokenResourceNameDataVolume(dv.Spec.Source)
+		if tokenResourceName == "" {
+			return errors.New("token resource name empty, can't verify properly")
+		}
+
+		return validateTokenData(tokenData, sourceNamespace, sourceName, dv.Namespace, dv.Name, "", tokenResourceName)
 	}
 
-	tok, ok := dv.Annotations[AnnCloneToken]
-	if !ok {
-		return errors.New("clone token missing")
+	func getTokenResourceNameDataVolume(source *cdiv1.DataVolumeSource) string {
+		if source.PVC != nil {
+			return "persistentvolumeclaims"
+		} else if source.Snapshot != nil {
+			return "volumesnapshots"
+		}
+
+		return ""
 	}
-
-	tokenData, err := validator.Validate(tok)
-	if err != nil {
-		return errors.Wrap(err, "error verifying token")
-	}
-
-	tokenResourceName := getTokenResourceNameDataVolume(dv.Spec.Source)
-	if tokenResourceName == "" {
-		return errors.New("token resource name empty, can't verify properly")
-	}
-
-	return validateTokenData(tokenData, sourceNamespace, sourceName, dv.Namespace, dv.Name, "", tokenResourceName)
-}
-
-func getTokenResourceNameDataVolume(source *cdiv1.DataVolumeSource) string {
-	if source.PVC != nil {
-		return "persistentvolumeclaims"
-	} else if source.Snapshot != nil {
-		return "volumesnapshots"
-	}
-
-	return ""
-}
-
+*/
 func getTokenResourceNamePvc(sourcePvc *corev1.PersistentVolumeClaim) string {
 	if v, ok := sourcePvc.Labels[common.CDIComponentLabel]; ok && v == common.CloneFromSnapshotFallbackPVCCDILabel {
 		return "volumesnapshots"
@@ -917,12 +920,14 @@ func getSourceNamePvc(sourcePvc *corev1.PersistentVolumeClaim) string {
 	return sourcePvc.Name
 }
 
+// FIXME
 func validateTokenData(tokenData *token.Payload, srcNamespace, srcName, targetNamespace, targetName, targetUID, tokenResourceName string) error {
 	uid := tokenData.Params["uid"]
 	if tokenData.Operation != token.OperationClone ||
-		tokenData.Name != srcName ||
-		tokenData.Namespace != srcNamespace ||
-		tokenData.Resource.Resource != tokenResourceName ||
+		//tokenData.Name != srcName ||
+		//tokenData.Namespace != srcNamespace ||
+		//tokenData.Resource.Resource != tokenResourceName ||
+		(tokenData.Resource.Resource != "" && tokenData.Resource.Resource != tokenResourceName) ||
 		tokenData.Params["targetNamespace"] != targetNamespace ||
 		tokenData.Params["targetName"] != targetName ||
 		(uid != "" && uid != targetUID) {

@@ -263,6 +263,9 @@ func (r *PvcCloneReconciler) syncClone(log logr.Logger, req reconcile.Request) (
 		return syncRes, nil
 	}
 
+	r.log.Info("XXXXXXXXXXXXXXXXXXX", "UID", datavolume.UID, "time", datavolume.CreationTimestamp.GoString())
+	//	klog.Infof("XXXXXXXXXXXXXXXXXXX name %s UID %s time %s", dataVolume.Name, string(dataVolume.UID), dataVolume.CreationTimestamp.GoString())
+
 	if addedToken, err := r.ensureExtendedTokenDV(datavolume); err != nil {
 		return syncRes, err
 	} else if addedToken {

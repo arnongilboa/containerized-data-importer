@@ -27,7 +27,6 @@ import (
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8sfield "k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -104,10 +103,12 @@ func (wh *dataVolumeMutatingWebhook) Admit(ar admissionv1.AdmissionReview) *admi
 		targetName = ar.Request.Name
 	}
 
+	//FIXME
+	/**
 	proxy := &authProxy{k8sClient: wh.k8sClient, cdiClient: wh.cdiClient}
 	response, err := modifiedDataVolume.AuthorizeUser(ar.Request.Namespace, ar.Request.Name, proxy, ar.Request.UserInfo)
 	if err != nil {
-		if err == cdiv1.ErrNoTokenOkay {
+		if err == cdiv1.ErrNoTokenOkay || err == ErrDataSourceNotFound{
 			return toPatchResponse(dataVolume, modifiedDataVolume)
 		}
 		return toAdmissionResponseError(err)
@@ -123,25 +124,34 @@ func (wh *dataVolumeMutatingWebhook) Admit(ar admissionv1.AdmissionReview) *admi
 		}
 		return toRejectedAdmissionResponse(causes)
 	}
-
+	*/
 	// only add token at create time
 	if ar.Request.Operation != admissionv1.Create {
 		return toPatchResponse(dataVolume, modifiedDataVolume)
 	}
-
+	/**
 	sourceName, sourceNamespace := response.Handler.SourceName, response.Handler.SourceNamespace
 	if sourceNamespace == "" {
 		sourceNamespace = targetNamespace
 	}
+	*/
+	//	klog.Infof("XXXXXXXXXXXXXXXXXXX name %s UID %s time %s", dataVolume.Name, string(dataVolume.UID), dataVolume.CreationTimestamp.GoString())
 
+	userInfoBytes, err := json.Marshal(ar.Request.UserInfo)
+	if err != nil {
+		return toAdmissionResponseError(err)
+	}
+
+	//FIXME: debug XXXXXX
 	tokenData := &token.Payload{
 		Operation: token.OperationClone,
-		Name:      sourceName,
-		Namespace: sourceNamespace,
-		Resource:  response.Handler.TokenResource,
+		//Name:      sourceName,//remove check in controller
+		//Namespace: sourceNamespace, //remove check in controller
+		//Resource:  metav1.GroupVersionResource{}, //complete in controller //remove check in controller
 		Params: map[string]string{
 			"targetNamespace": targetNamespace,
 			"targetName":      targetName,
+			"userInfo":        string(userInfoBytes),
 		},
 	}
 

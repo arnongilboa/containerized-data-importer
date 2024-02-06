@@ -34,9 +34,14 @@ const (
 	AnnCheckStaticVolume = core.GroupName + "/storage.checkStaticVolume"
 )
 
-// ErrNoTokenOkay indicates proceeding without token is allowed
-// This error should only be of interest to entities that give out DataVolume tokens
-var ErrNoTokenOkay = errors.New("proceeding without token is okay under the circumstances")
+var (
+	// ErrNoTokenOkay indicates proceeding without token is allowed
+	// This error should only be of interest to entities that give out DataVolume tokens
+	ErrNoTokenOkay = errors.New("proceeding without token is okay under the circumstances")
+
+	// ErrDataSourceNotFound indicates DataVolume sourceRef'ed DataSource was not found yet
+	ErrDataSourceNotFound = errors.New("datasource not found")
+)
 
 // AuthorizeUser indicates if the creating user is authorized to create the data volume
 // For sources other than clone (import/upload/etc), this is a no-op
@@ -55,6 +60,17 @@ func (dv *DataVolume) AuthorizeUser(requestNamespace, requestName string, proxy 
 
 	cloneSourceHandler, err := newCloneSourceHandler(dv, proxy.GetDataSource)
 	if err != nil {
+		sourceRef := dv.Spec.SourceRef
+		if k8serrors.IsNotFound(err) && sourceRef != nil {
+			sourceRefNamespace := targetNamespace
+			if sourceRef.Namespace != nil {
+				sourceRefNamespace = *sourceRef.Namespace
+			}
+			klog.V(3).Infof("DataVolume %s/%s sourceRef %s %s/%s was not found yet", targetNamespace, targetName,
+				sourceRef.Kind, sourceRefNamespace, sourceRef.Name)
+			return CloneAuthResponse{Allowed: true, Reason: "", Handler: cloneSourceHandler}, ErrDataSourceNotFound
+		}
+
 		if k8serrors.IsNotFound(err) && noTokenOkay {
 			// no token needed, likely since no datasource
 			klog.V(3).Infof("DataVolume %s/%s is pre/static populated, not adding token, no datasource", targetNamespace, targetName)

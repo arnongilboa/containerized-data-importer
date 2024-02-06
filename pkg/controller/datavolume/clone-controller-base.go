@@ -18,10 +18,14 @@ package datavolume
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 
 	"github.com/pkg/errors"
+
+	authenticationv1 "k8s.io/api/authentication/v1"
+	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -232,6 +236,11 @@ func (r *CloneReconcilerBase) ensureExtendedTokenDV(dv *cdiv1.DataVolume) (bool,
 		return false, err
 	}
 
+	//FIXME: check
+	if err := r.authorizeUser(dv, payload); err != nil {
+		return false, err
+	}
+
 	if payload.Params == nil {
 		payload.Params = make(map[string]string)
 	}
@@ -245,6 +254,49 @@ func (r *CloneReconcilerBase) ensureExtendedTokenDV(dv *cdiv1.DataVolume) (bool,
 	dv.Annotations[cc.AnnExtendedCloneToken] = newToken
 
 	return true, nil
+}
+
+func (r *CloneReconcilerBase) authorizeUser(dv *cdiv1.DataVolume, payload *token.Payload) error {
+	userInfo := authenticationv1.UserInfo{}
+	if err := json.Unmarshal([]byte(payload.Params["userInfo"]), &userInfo); err != nil {
+		return err
+	}
+
+	response, err := dv.AuthorizeUser(dv.Namespace, dv.Name, r, userInfo)
+	if err != nil {
+		return err
+	}
+	if !response.Allowed {
+		return fmt.Errorf("user not authrized")
+	}
+
+	return nil
+}
+
+// CreateSar creates SubjectAccessReview
+func (r *CloneReconcilerBase) CreateSar(sar *authv1.SubjectAccessReview) (*authv1.SubjectAccessReview, error) {
+	if err := r.client.Create(context.TODO(), sar); err != nil {
+		return nil, err
+	}
+	return sar, nil
+}
+
+// GetNamespace gets Namespace
+func (r *CloneReconcilerBase) GetNamespace(name string) (*corev1.Namespace, error) {
+	ns := &corev1.Namespace{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: name}, ns); err != nil {
+		return nil, err
+	}
+	return ns, nil
+}
+
+// GetDataSource gets DataSource
+func (r *CloneReconcilerBase) GetDataSource(namespace, name string) (*cdiv1.DataSource, error) {
+	ds := &cdiv1.DataSource{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: namespace, Name: name}, ds); err != nil {
+		return nil, err
+	}
+	return ds, nil
 }
 
 func (r *CloneReconcilerBase) fallbackToHostAssisted(pvc *corev1.PersistentVolumeClaim) error {

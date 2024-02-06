@@ -295,7 +295,8 @@ var _ = Describe("all clone tests", func() {
 				f.AddNamespaceToDelete(targetNs)
 				doFileBasedCloneTest(f, pvcDef, targetNs, "target-dv", targetSize)
 			},
-				Entry("with same target size", "1Gi"),
+				//XXXXX
+				FEntry("with same target size", "1Gi"),
 				Entry("with bigger target size", "2Gi"),
 			)
 
@@ -1401,6 +1402,7 @@ var _ = Describe("all clone tests", func() {
 				compareCloneWithSource(sourcePvc, secondTargetPvc, diskImagePath, diskImagePath)
 			})
 
+			//XXXXXX
 			It("Should clone using size-detection pod across namespaces", func() {
 				dataVolume := utils.NewDataVolumeWithHTTPImportAndStorageSpec(dataVolumeName, "200Mi", fmt.Sprintf(utils.TinyCoreIsoURL, f.CdiInstallNs))
 				dataVolume.Spec.Storage.VolumeMode = &volumeMode

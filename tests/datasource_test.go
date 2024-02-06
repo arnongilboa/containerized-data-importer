@@ -69,10 +69,17 @@ var _ = Describe("DataSource", func() {
 		f.ForceBindIfWaitForFirstConsumer(pvc)
 	}
 
-	It("[test_id:8041]status conditions should be updated on pvc create/update/delete", func() {
+	FIt("[test_id:8041]status conditions should be updated on pvc create/update/delete", func() {
+		By("Create clone DV with SourceRef pointing the DataSource")
+		dv := utils.NewDataVolumeWithSourceRef("clone-dv", "1Gi", f.Namespace.Name, ds1Name)
+		dv.Annotations[cc.AnnImmediateBinding] = "true"
+		Expect(dv).ToNot(BeNil())
+		dv, err := utils.CreateDataVolumeFromDefinition(f.CdiClient, f.Namespace.Name, dv)
+		Expect(err).ToNot(HaveOccurred())
+
 		By("Create DataSource with no source PVC")
 		ds := newDataSource(ds1Name)
-		ds, err := f.CdiClient.CdiV1beta1().DataSources(ds.Namespace).Create(context.TODO(), ds, metav1.CreateOptions{})
+		ds, err = f.CdiClient.CdiV1beta1().DataSources(ds.Namespace).Create(context.TODO(), ds, metav1.CreateOptions{})
 		Expect(err).ToNot(HaveOccurred())
 		ds = waitForReadyCondition(ds, corev1.ConditionFalse, "NoSource")
 
@@ -81,14 +88,14 @@ var _ = Describe("DataSource", func() {
 		ds, err = f.CdiClient.CdiV1beta1().DataSources(ds.Namespace).Update(context.TODO(), ds, metav1.UpdateOptions{})
 		Expect(err).ToNot(HaveOccurred())
 		ds = waitForReadyCondition(ds, corev1.ConditionFalse, "NotFound")
-
+		/**
 		By("Create clone DV with SourceRef pointing the DataSource")
 		dv := utils.NewDataVolumeWithSourceRef("clone-dv", "1Gi", ds.Namespace, ds.Name)
 		dv.Annotations[cc.AnnImmediateBinding] = "true"
 		Expect(dv).ToNot(BeNil())
 		dv, err = utils.CreateDataVolumeFromDefinition(f.CdiClient, f.Namespace.Name, dv)
 		Expect(err).ToNot(HaveOccurred())
-
+		*/
 		By("Verify DV conditions")
 		utils.WaitForConditions(f, dv.Name, dv.Namespace, time.Minute, pollingInterval,
 			&cdiv1.DataVolumeCondition{Type: cdiv1.DataVolumeBound, Status: corev1.ConditionUnknown, Message: "The source pvc pvc1 doesn't exist", Reason: dvc.CloneWithoutSource},

@@ -651,6 +651,7 @@ var _ = Describe("TokenValidation", func() {
 	g := token.NewGenerator(common.CloneTokenIssuer, cc.GetAPIServerKey(), 5*time.Minute)
 	v := cc.NewCloneTokenValidator(common.CloneTokenIssuer, &cc.GetAPIServerKey().PublicKey)
 
+	//FIXME
 	goodTokenData := func() *token.Payload {
 		return &token.Payload{
 			Operation: token.OperationClone,

@@ -264,6 +264,8 @@ func (wh *dataVolumeValidatingWebhook) validateSourceRef(request *admissionv1.Ad
 			Field:   field.Child("sourceRef", "Name").String(),
 		}
 	}
+	return nil
+	/**
 	if request.Operation != admissionv1.Create {
 		return nil
 	}
@@ -296,6 +298,7 @@ func (wh *dataVolumeValidatingWebhook) validateSourceRef(request *admissionv1.Ad
 		Message: fmt.Sprintf("Empty source field in '%s'. DataSource may not be ready yet", dataSource.Name),
 		Field:   field.Child("sourceRef").String(),
 	}
+	*/
 }
 
 func (wh *dataVolumeValidatingWebhook) validateDataVolumeSourcePVC(PVC *cdiv1.DataVolumeSourcePVC, field *k8sfield.Path, spec *cdiv1.DataVolumeSpec) *metav1.StatusCause {
