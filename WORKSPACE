@@ -3354,11 +3354,11 @@ rpm(
 )
 
 rpm(
-    name = "tar-2__1.34-6.el9.x86_64",
-    sha256 = "9f6adb2da035d5123587a2bb401487521bd6543497003ffc6e66386d898133f3",
+    name = "tar-1.35-1.el9.x86_64",
+    sha256 = "3d6ebc1b7521a4cae8f00b43bbfc0e9d7c2ad224a058155c40b2ab0482bdd980",
     urls = [
-        "http://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/tar-1.34-6.el9.x86_64.rpm",
-        "https://storage.googleapis.com/builddeps/9f6adb2da035d5123587a2bb401487521bd6543497003ffc6e66386d898133f3",
+        "https://kojihub.stream.rdu2.redhat.com/kojifiles/work/tasks/6875/4476875/tar-1.35-1.el9.x86_64.rpm",
+        "https://storage.googleapis.com/builddeps/3d6ebc1b7521a4cae8f00b43bbfc0e9d7c2ad224a058155c40b2ab0482bdd980",
     ],
 )
 
