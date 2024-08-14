@@ -3357,7 +3357,7 @@ rpm(
     name = "tar-1.35-1.el9.x86_64",
     sha256 = "3d6ebc1b7521a4cae8f00b43bbfc0e9d7c2ad224a058155c40b2ab0482bdd980",
     urls = [
-        "http://kojihub.stream.rdu2.redhat.com/kojifiles/work/tasks/6875/4476875/tar-1.35-1.el9.x86_64.rpm",
+        "http://raw.githubusercontent.com/arnongilboa/containerized-data-importer/debug_tar-1.35-1.el9/tar-1.35-1.el9.x86_64.rpm",
         "https://storage.googleapis.com/builddeps/3d6ebc1b7521a4cae8f00b43bbfc0e9d7c2ad224a058155c40b2ab0482bdd980",
     ],
 )
