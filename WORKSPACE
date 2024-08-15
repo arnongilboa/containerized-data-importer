@@ -3354,11 +3354,11 @@ rpm(
 )
 
 rpm(
-    name = "tar-2__1.34-6.el9.x86_64",
-    sha256 = "9f6adb2da035d5123587a2bb401487521bd6543497003ffc6e66386d898133f3",
+    name = "tar-1.34-7.el9.x86_64",
+    sha256 = "cc792c8382b916923d13eae02a10d967802c9ec997847255d383e7a45edcead1",
     urls = [
-        "http://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/tar-1.34-6.el9.x86_64.rpm",
-        "https://storage.googleapis.com/builddeps/9f6adb2da035d5123587a2bb401487521bd6543497003ffc6e66386d898133f3",
+        "http://raw.githubusercontent.com/arnongilboa/containerized-data-importer/debug_tar-1.34-7.el9/tar-1.34-7.el9.x86_64.rpm",
+        "https://storage.googleapis.com/builddeps/cc792c8382b916923d13eae02a10d967802c9ec997847255d383e7a45edcead1",
     ],
 )
 
